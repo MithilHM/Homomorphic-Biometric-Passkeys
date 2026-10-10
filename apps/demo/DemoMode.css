@@ -1,0 +1,910 @@
+/**
+ * Security Demo Mode Styles
+ * High-fidelity animations and premium UI for biometric authentication demo
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Demo Mode Container
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.demo-mode-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2.5rem;
+    min-height: 600px;
+    background: linear-gradient(135deg, rgba(15, 16, 24, 0.98) 0%, rgba(3, 3, 8, 0.99) 100%);
+    border-radius: 28px;
+    border: 1px solid var(--glass-border);
+    position: relative;
+    overflow: hidden;
+}
+
+.demo-mode-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg,
+            transparent,
+            var(--primary) 30%,
+            var(--accent) 70%,
+            transparent);
+    opacity: 0.8;
+}
+
+.demo-mode-container.active {
+    gap: 2rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Demo Header
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.demo-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.demo-title {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--text-main) 0%, var(--primary-light) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.75rem;
+}
+
+.demo-title svg {
+    color: var(--primary);
+    filter: drop-shadow(0 0 12px var(--primary-glow));
+}
+
+.demo-subtitle {
+    color: var(--text-muted);
+    font-size: 1rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Flow Selection Cards
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.flow-selection {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    width: 100%;
+    max-width: 700px;
+}
+
+.flow-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.flow-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.flow-card.setup::before {
+    background: linear-gradient(90deg, var(--primary), var(--pink));
+}
+
+.flow-card.access::before {
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+}
+
+.flow-card:hover::before {
+    opacity: 1;
+}
+
+.flow-card:hover {
+    border-color: var(--glass-border-hover);
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.4),
+        0 0 60px rgba(139, 92, 246, 0.15);
+}
+
+.flow-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+}
+
+.flow-card h3 {
+    font-size: 1.375rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-main);
+}
+
+.flow-card p {
+    color: var(--text-muted);
+    margin-bottom: 1.25rem;
+}
+
+.flow-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.flow-steps span {
+    padding: 0.25rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+}
+
+.flow-steps span:nth-child(even) {
+    background: transparent;
+    color: var(--primary-light);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Camera Scanner
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.camera-scanner-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    width: 100%;
+    max-width: 640px;
+}
+
+.camera-viewport {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.camera-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: brightness(1.05) contrast(1.05);
+}
+
+/* Scan Overlay */
+.scan-overlay-demo {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+/* Laser Scan Line */
+.laser-scan-line {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(139, 92, 246, 0.4) 10%,
+            var(--primary-light) 25%,
+            var(--accent) 50%,
+            var(--primary-light) 75%,
+            rgba(139, 92, 246, 0.4) 90%,
+            transparent 100%);
+    box-shadow:
+        0 0 20px var(--primary-glow),
+        0 0 40px var(--primary-glow),
+        0 0 60px var(--accent-glow);
+    filter: blur(0.5px);
+}
+
+/* Corner Markers */
+.corner-marker {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    border: 3px solid var(--accent);
+    border-radius: 6px;
+}
+
+.corner-marker.top-left {
+    top: 20px;
+    left: 20px;
+    border-right: none;
+    border-bottom: none;
+    box-shadow: -4px -4px 15px var(--accent-glow);
+}
+
+.corner-marker.top-right {
+    top: 20px;
+    right: 20px;
+    border-left: none;
+    border-bottom: none;
+    box-shadow: 4px -4px 15px var(--accent-glow);
+}
+
+.corner-marker.bottom-left {
+    bottom: 20px;
+    left: 20px;
+    border-right: none;
+    border-top: none;
+    box-shadow: -4px 4px 15px var(--accent-glow);
+}
+
+.corner-marker.bottom-right {
+    bottom: 20px;
+    right: 20px;
+    border-left: none;
+    border-top: none;
+    box-shadow: 4px 4px 15px var(--accent-glow);
+}
+
+/* Face Detection Zone */
+.face-detection-zone {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 220px;
+    height: 280px;
+    border-radius: 110px 110px 60px 60px;
+    border: 2px solid rgba(139, 92, 246, 0.5);
+    background: transparent;
+}
+
+.face-detection-zone::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 114px 114px 64px 64px;
+    padding: 2px;
+    background: linear-gradient(135deg, var(--primary), var(--cyan), var(--accent));
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0.7;
+}
+
+/* Grid Overlay */
+.grid-overlay {
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(139, 92, 246, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(139, 92, 246, 0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.5;
+}
+
+/* Camera Status */
+.camera-status {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-dot.scanning {
+    box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Capture Button */
+.capture-button {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+        0 8px 32px rgba(139, 92, 246, 0.4),
+        inset 0 2px 0 rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+}
+
+.capture-button:hover {
+    box-shadow:
+        0 12px 40px rgba(139, 92, 246, 0.5),
+        0 0 60px rgba(139, 92, 246, 0.3),
+        inset 0 2px 0 rgba(255, 255, 255, 0.2);
+}
+
+.capture-ring {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    animation: captureRingPulse 2s ease-out infinite;
+}
+
+@keyframes captureRingPulse {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(1.5);
+        opacity: 0;
+    }
+}
+
+.capture-center {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Processing Pipeline
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.processing-pipeline {
+    width: 100%;
+    max-width: 800px;
+    padding: 2rem;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+}
+
+.pipeline-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.125rem;
+    color: var(--text-main);
+    margin-bottom: 2rem;
+}
+
+.pipeline-title svg {
+    color: var(--primary);
+}
+
+.pipeline-stages {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.pipeline-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    position: relative;
+}
+
+.node-icon {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid var(--glass-border);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+}
+
+.pipeline-node.active .node-icon {
+    border-color: var(--primary);
+    background: rgba(139, 92, 246, 0.15);
+    box-shadow: 0 0 30px var(--primary-glow);
+}
+
+.pipeline-node.complete .node-icon {
+    border-color: var(--accent);
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent);
+}
+
+.node-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.pipeline-node.active .node-label {
+    color: var(--primary-light);
+}
+
+.pipeline-node.complete .node-label {
+    color: var(--accent);
+}
+
+.node-progress-ring {
+    position: absolute;
+    top: -4px;
+    left: calc(50% - 34px);
+    width: 68px;
+    height: 68px;
+    border: 2px solid transparent;
+    border-top: 2px solid var(--primary);
+    border-radius: 50%;
+}
+
+.pipeline-connector {
+    flex: 1;
+    height: 3px;
+    background: var(--glass-border);
+    border-radius: 2px;
+    min-width: 30px;
+    max-width: 60px;
+    transform-origin: left;
+}
+
+.pipeline-connector.complete {
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+}
+
+/* Feature Map Preview */
+.feature-map-preview {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--glass-border);
+}
+
+.feature-map-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+    max-width: 200px;
+    margin: 0 auto;
+}
+
+.feature-map-cell {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    background: var(--primary);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Encryption Visualizer
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.encryption-visualizer {
+    width: 100%;
+    max-width: 900px;
+    padding: 2rem;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+}
+
+.visualizer-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.125rem;
+    color: var(--text-main);
+    margin-bottom: 2rem;
+}
+
+.visualizer-title svg {
+    color: var(--accent);
+}
+
+.encryption-flow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.encryption-stage {
+    flex: 1;
+    min-width: 200px;
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    text-align: center;
+}
+
+.stage-label {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+.stage-info {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Embedding Heatmap */
+.embedding-heatmap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0.5rem;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 8px;
+}
+
+.heatmap-row {
+    display: flex;
+    gap: 2px;
+}
+
+.heatmap-cell {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+}
+
+/* Encryption Arrow */
+.encryption-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem;
+    position: relative;
+}
+
+.encryption-particles {
+    position: absolute;
+    font-size: 1rem;
+}
+
+/* Ciphertext Display */
+.ciphertext-display {
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 8px;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ciphertext-hex {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.625rem;
+    color: var(--accent);
+    word-break: break-all;
+    text-align: center;
+    line-height: 1.8;
+}
+
+.hex-line {
+    display: block;
+    letter-spacing: 0.1em;
+}
+
+.ciphertext-placeholder {
+    color: var(--text-dim);
+    font-size: 0.8125rem;
+}
+
+/* Encryption Parameters */
+.encryption-params {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+}
+
+.param {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: center;
+}
+
+.param-label {
+    font-size: 0.6875rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.param-value {
+    font-size: 0.875rem;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.param-value.mono {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--primary-light);
+}
+
+/* Encryption Progress */
+.encryption-progress {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+    border-radius: 3px;
+}
+
+.progress-text {
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-muted);
+    min-width: 40px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Result Display
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.result-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 3rem;
+    border-radius: 24px;
+    text-align: center;
+    max-width: 400px;
+}
+
+.result-display.success {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.05) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    box-shadow:
+        0 0 60px rgba(16, 185, 129, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.result-display.denied {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.05) 100%);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    box-shadow:
+        0 0 60px rgba(239, 68, 68, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.result-icon {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.result-display.success .result-icon {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--accent);
+}
+
+.result-display.success .result-icon svg {
+    width: 40px;
+    height: 40px;
+    filter: drop-shadow(0 0 12px var(--accent-glow));
+}
+
+.result-display.denied .result-icon {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--error);
+}
+
+.result-display.denied .result-icon svg {
+    width: 40px;
+    height: 40px;
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.5));
+}
+
+.result-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.result-display.success .result-title {
+    color: var(--accent);
+}
+
+.result-display.denied .result-title {
+    color: var(--error);
+}
+
+.result-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.result-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+}
+
+.result-item span:first-child {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.result-item span.mono {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-main);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Progress Header
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.demo-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.flow-indicator {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.overall-progress {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.progress-bar-mini {
+    width: 120px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill-mini {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+    border-radius: 2px;
+}
+
+.overall-progress span {
+    font-size: 0.875rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-muted);
+    min-width: 40px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Storage Info
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+.storage-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 2rem;
+    padding: 0.75rem 1.5rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.storage-info svg {
+    color: var(--primary);
+    opacity: 0.7;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Responsive Adjustments
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+    .demo-mode-container {
+        padding: 1.5rem;
+    }
+
+    .demo-title {
+        font-size: 1.5rem;
+    }
+
+    .flow-selection {
+        grid-template-columns: 1fr;
+    }
+
+    .encryption-flow {
+        flex-direction: column;
+    }
+
+    .encryption-arrow {
+        transform: rotate(90deg);
+    }
+
+    .pipeline-stages {
+        justify-content: center;
+    }
+
+    .pipeline-connector {
+        display: none;
+    }
+}

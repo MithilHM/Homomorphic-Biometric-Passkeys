@@ -1,0 +1,16 @@
+{
+  "name": "@homobio/crypto-utils",
+  "version": "1.0.0",
+  "description": "Cryptographic utilities, CKKS parameters, and embedding math for Homomorphic Biometric Passkeys",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@homobio/protocol-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "homomorphic-biometric-passkeys",
+  "version": "1.0.0",
+  "description": "Privacy-preserving biometric authentication + WebAuthn Passkeys + FHE + ZK + ERC-4337 Smart Accounts on Monad",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx"
+  },
+  "keywords": [
+    "fhe",
+    "ckks",
+    "openfhe",
+    "webauthn",
+    "passkeys",
+    "erc-4337",
+    "monad",
+    "biometrics",
+    "smart-accounts",
+    "zero-knowledge"
+  ],
+  "author": "Mithil H M",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

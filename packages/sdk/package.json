@@ -1,0 +1,19 @@
+{
+  "name": "@homobio/sdk",
+  "version": "1.0.0",
+  "description": "Developer SDK for Homomorphic Biometric Passkeys on Monad",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@homobio/protocol-types": "workspace:*",
+    "@homobio/crypto-utils": "workspace:*",
+    "@homobio/webauthn": "workspace:*",
+    "@homobio/userop": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

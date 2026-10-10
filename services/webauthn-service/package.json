@@ -1,0 +1,19 @@
+{
+  "name": "@homobio/webauthn-service",
+  "version": "1.0.0",
+  "description": "WebAuthn credential registration and assertion verification service",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@homobio/protocol-types": "workspace:*",
+    "@homobio/webauthn": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.11.0"
+  }
+}

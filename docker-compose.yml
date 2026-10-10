@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - FHE_SERVICE_URL=http://fhe-coprocessor:5001
+      - REDIS_URL=redis://redis:6379
+      - MONAD_RPC=https://testnet-rpc.monad.xyz
+      - CHAIN_ID=143
+    depends_on:
+      - fhe-coprocessor
+      - redis
+    restart: unless-stopped
+
+  fhe-coprocessor:
+    build:
+      context: .
+      dockerfile: services/fhe-service/Dockerfile
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - RING_DIM=8192
+      - MULT_DEPTH=5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
