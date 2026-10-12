@@ -1,0 +1,482 @@
+# Kubernetes manifests for the Homomorphic Biometric Passkeys stack.
+#
+#   kubectl apply -k infra/k8s/overlays/production
+#
+# Two workloads, deliberately separate:
+#   - fhe-coprocessor holds decryption share 0 and the FHE key set. It is the
+#     component that sees ciphertexts, so it must be a distinct workload with
+#     its own service account and no ingress.
+#   - gateway holds share 1 and is the only component with ingress. It calls the
+#     coprocessor over the cluster network behind a shared token.
+#
+# The third share (custody) is deliberately NOT in this manifest. It should live
+# in a separate trust domain â€” an HSM or a custody service â€” because a
+# single-cluster compromise of everything below still must not be able to decrypt.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homobio
+  labels:
+    app.kubernetes.io/part-of: homomorphic-biometric-passkeys
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fhe-coprocessor
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: fhe-coprocessor
+# The coprocessor must never talk to the API server beyond its own pods.
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gateway
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: gateway
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homobio-config
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: homobio-config
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  CHAIN_ID: "143"
+  CHAIN_NAME: "Monad Testnet"
+  MONAD_RPC: "https://testnet-rpc.monad.xyz"
+  MONAD_ENTRY_POINT: "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+  FHE_ERROR_BOUND: "0.001953125"
+  # Reuse the key set across restarts. Without this, a restart generates a new
+  # key and every enrolled template becomes permanently undecryptable.
+  FHE_REUSE_KEYS: "true"
+  WEBAUTHN_RP_NAME: "Homomorphic Biometric Passkeys"
+  DEFAULT_POLICY_ID: "policy-standard-v1"
+  MODEL_VERSION: "rp-canonical-v1"
+  RELAYER_DRY_RUN: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: homobio-secrets
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: homobio-secrets
+type: Opaque
+stringData:
+  # PLACEHOLDER VALUES. Replace before applying â€” or, preferably, do not store
+  # these in the cluster at all and source them from an external secrets manager
+  # (External Secrets Operator, Vault, AWS/GCP secret manager). A Secret in
+  # etcd is readable by anyone with cluster read access.
+  #
+  #   FHE_SERVICE_TOKEN   authenticates gateway -> coprocessor
+  #   CUSTODY_UNLOCK_SECRET  unlocks committee share 2
+  #   PROOF_SERVICE_SECRET_PEM  secp256k1 key whose ADDRESS must be registered
+  #                              in ProofVerifierRegistry, or every on-chain
+  #                              authorization reverts with SignatureInvalid
+  FHE_SERVICE_TOKEN: "REPLACE_ME"
+  CUSTODY_UNLOCK_SECRET: "REPLACE_ME"
+  CUSTODY_UNLOCK_ON_BOOT: "false"
+  PROOF_SERVICE_SECRET_PEM: ""
+  WEBAUTHN_RP_ID: "app.example.com"
+  WEBAUTHN_ORIGIN: "https://app.example.com"
+  ALLOWED_ORIGINS: "https://app.example.com"
+  ACCOUNT_FACTORY_ADDRESS: ""
+  AUTHORIZATION_VERIFIER_ADDRESS: ""
+  PROOF_VERIFIER_REGISTRY_ADDRESS: ""
+  BUNDLER_URL: ""
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fhe-key-material
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: fhe-key-material
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fhe-coprocessor
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: fhe-coprocessor
+spec:
+  selector:
+    app.kubernetes.io/name: fhe-coprocessor
+  ports:
+    # ClusterIP only. The coprocessor has no ingress path by design.
+    - name: http
+      port: 5001
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fhe-coprocessor
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: fhe-coprocessor
+spec:
+  # One replica: the key set and share 0 live on its volume, and two writers
+  # would generate divergent key material. Horizontal scaling of the *decision*
+  # path is not yet supported by the threshold protocol.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fhe-coprocessor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fhe-coprocessor
+    spec:
+      serviceAccountName: fhe-coprocessor
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: coprocessor
+          image: ghcr.io/example/homobio-fhe-coprocessor:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5001
+          env:
+            - name: FHE_PORT
+              value: "5001"
+            - name: FHE_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: FHE_SERVICE_TOKEN
+            - name: HOMOBIO_DATA_DIR
+              value: /app/.data
+          envFrom:
+            - configMapRef:
+                name: homobio-config
+          volumeMounts:
+            - name: key-material
+              mountPath: /app/.data
+          # Startup probe, not liveness: a restart mid-key-generation must not
+          # thrash. The liveness probe only fires after the process is up.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: key-material
+          persistentVolumeClaim:
+            claimName: fhe-key-material
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: homobio
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  # The gateway is stateless apart from its records, so it scales. Note that a
+  # scale-out requires the challenge store to be shared: challenges and session
+  # consumption are currently in-process, and two replicas would each believe a
+  # challenge is unspent. Ship a shared store before scaling past 1.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+    spec:
+      serviceAccountName: gateway
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: ghcr.io/example/homobio-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            - name: PORT
+              value: "5000"
+            - name: HOMOBIO_DATA_DIR
+              value: /app/.data
+            - name: FHE_SERVICE_URL
+              value: http://fhe-coprocessor:5001
+            - name: FHE_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: FHE_SERVICE_TOKEN
+            - name: CUSTODY_UNLOCK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: CUSTODY_UNLOCK_SECRET
+            - name: CUSTODY_UNLOCK_ON_BOOT
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: CUSTODY_UNLOCK_ON_BOOT
+            - name: PROOF_SERVICE_SECRET_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: PROOF_SERVICE_SECRET_PEM
+            - name: WEBAUTHN_RP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: WEBAUTHN_RP_ID
+            - name: WEBAUTHN_ORIGIN
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: WEBAUTHN_ORIGIN
+            - name: ALLOWED_ORIGINS
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: ALLOWED_ORIGINS
+            - name: ACCOUNT_FACTORY_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: ACCOUNT_FACTORY_ADDRESS
+            - name: AUTHORIZATION_VERIFIER_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: AUTHORIZATION_VERIFIER_ADDRESS
+            - name: PROOF_VERIFIER_REGISTRY_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: PROOF_VERIFIER_REGISTRY_ADDRESS
+            - name: BUNDLER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: homobio-secrets
+                  key: BUNDLER_URL
+          envFrom:
+            - configMapRef:
+                name: homobio-config
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway
+  namespace: homobio
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: homobio
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: homobio-default-deny
+  namespace: homobio
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-coprocessor
+  namespace: homobio
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fhe-coprocessor
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - port: 5001
+          protocol: TCP
+  egress:
+    # DNS for the cluster, plus outbound HTTPS for the Monad RPC endpoint.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+    - ports:
+        - port: 443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: homobio
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fhe-coprocessor
+      ports:
+        - port: 5001
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Bundler endpoint, if a self-hosted one is used.
+    - ports:
+        - port: 8545
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-gateway
+  namespace: homobio
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 5000
+          protocol: TCP
+

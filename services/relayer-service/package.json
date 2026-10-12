@@ -1,18 +1,10 @@
-{
-  "name": "@homobio/relayer-service",
-  "version": "1.0.0",
-  "description": "ERC-4337 UserOperation bundler and Monad transaction relayer service",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js"
-  },
-  "dependencies": {
-    "@homobio/protocol-types": "workspace:*"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.3",
-    "@types/node": "^20.11.0"
-  }
+﻿{
+    "version":  "2.0.0",
+    "name":  "@homobio/relayer-service",
+    "main":  "./src/index.ts",
+    "exports":  {
+                    ".":  "./src/index.ts"
+                },
+    "type":  "module",
+    "private":  true
 }

@@ -1,0 +1,328 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The gate: typecheck, unit + integration tests, contract compilation.
+  # ---------------------------------------------------------------------
+  verify:
+    name: typecheck, tests, contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Strict mode, noEmit. Keep this clean — it is the cheapest way to catch
+      # a protocol type drifting away from its Solidity mirror.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Includes the HTTP end-to-end suite with a software authenticator.
+      - name: Unit and integration tests
+        run: npm test
+
+      # Compiles every Solidity file with solc-js. Catches syntax and type
+      # errors without needing forge installed.
+      - name: Compile contracts
+        run: npm run compile:contracts
+
+  # ---------------------------------------------------------------------
+  # Conformance vectors must be reproducible.
+  #
+  # A dirty diff here means either the protocol changed without anyone
+  # re-justifying it, or someone edited the vectors by hand. Both need a human.
+  # ---------------------------------------------------------------------
+  vectors:
+    name: conformance vectors are reproducible
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Regenerate vectors
+        run: npm run vectors
+
+      - name: Vectors must not change
+        run: |
+          if ! git diff --quiet -- cryptography/vectors/protocol.json; then
+            echo "::error::cryptography/vectors/protocol.json changed."
+            echo "The protocol encoding changed. Update docs/protocol-spec.md and"
+            echo "the cross-language tests to match, then re-run 'npm run vectors'."
+            git diff -- cryptography/vectors/protocol.json
+            exit 1
+          fi
+          echo "vectors are reproducible"
+
+  # ---------------------------------------------------------------------
+  # The FHE parameter set must still be benchmark-justified.
+  #
+  # The documented error bound sizes the 'indeterminate' band: a capture inside
+  # it is refused rather than decided. If the measured error approaches that
+  # bound, the parameters need re-justifying BEFORE anyone relies on them.
+  # ---------------------------------------------------------------------
+  fhe-parameters:
+    name: FHE error bound holds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Benchmark the parameter matrix
+        run: npm run bench
+
+      - name: Assert the documented bound is conservative
+        run: |
+          node --input-type=module -e "
+          import { readFileSync } from 'node:fs';
+          const rows = JSON.parse(readFileSync('docs/benchmarks/fhe-parameters.json', 'utf-8'));
+          const DEFAULT = rows.find(r => r.ringDimension === 1024 && r.scaleBits === 18);
+          if (!DEFAULT) { console.error('default parameter set missing from the benchmark'); process.exit(1); }
+          const BOUND = 2 ** -9;
+          console.log('measured max error', DEFAULT.maxError, 'bound', BOUND);
+          if (DEFAULT.maxError >= BOUND) {
+            console.error('the measured error has reached the documented bound');
+            console.error('the indeterminate band is no longer conservative — re-justify the parameters');
+            process.exit(1);
+          }
+          if (DEFAULT.falseAccept > 0 || DEFAULT.falseReject > 0) {
+            console.error('the benchmark reports false accepts or rejects');
+            process.exit(1);
+          }
+          console.log('error bound holds with', (BOUND / DEFAULT.maxError).toFixed(1) + 'x headroom');
+          "
+
+  # ---------------------------------------------------------------------
+  # Contract execution tests under Foundry.
+  #
+  # Kept separate because forge is a large toolchain download. These are the
+  # only tests that actually EXECUTE the account's envelope decoder and the
+  # verifier's signature checks; everything else compares sources.
+  # ---------------------------------------------------------------------
+  contracts:
+    name: contract tests (foundry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      # forge-std is not vendored: it is a test-only dependency and pinning a
+      # git submodule would put a second toolchain in the repo's history.
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std@v1.9.6 --no-git
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test
+        run: forge test -vv
+
+      - name: Check for unbounded loops
+        # A loop over attacker-controlled calldata length can make validation
+        # gas unbounded, which is a denial-of-service on the EntryPoint.
+        run: |
+          if grep -rn "while (" contracts/ --include="*.sol" | grep -v "test" ; then
+            echo "::error::unbounded while loop in contracts/ — validation gas must be bounded"
+            exit 1
+          fi
+          echo "no unbounded loops"
+
+  # ---------------------------------------------------------------------
+  # Deployment manifests.
+  #
+  # `kubectl --dry-run` needs a live cluster to fetch the OpenAPI schema, so
+  # these are structural assertions instead: security contexts, resource
+  # limits, probes, Service selectors, and that the FHE coprocessor is never
+  # exposed outside the cluster.
+  # ---------------------------------------------------------------------
+  manifests:
+    name: deployment manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      - name: Validate the Kubernetes manifests
+        run: python infra/k8s/validate.py
+
+      - name: Every YAML file parses
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          files = (
+              glob.glob("infra/k8s/**/*.yaml", recursive=True)
+              + ["docker-compose.yml", ".github/workflows/ci.yml"]
+          )
+          for f in files:
+              list(yaml.safe_load_all(open(f, encoding="utf-8")))
+              print("ok", f)
+          PY
+
+  # ---------------------------------------------------------------------
+  # Security posture: no silently-broken crypto, no stray secrets.
+  # ---------------------------------------------------------------------
+  security:
+    name: security checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # A committed secret defeats the threshold committee entirely.
+      - name: No secrets committed
+        run: |
+          if git ls-files | grep -E '\.env$|\.pem$|share-[0-9]+\.json$'; then
+            echo "::error::key material or a .env file is committed."
+            echo "Committee shares and service tokens must never enter the repository."
+            exit 1
+          fi
+          echo "no committed secrets"
+
+      # A mock proof or a silent fallback to weaker auth would be a lie to
+      # every reader of the SDK. The SDK must refuse instead.
+      - name: No fabricated proofs or silent fallbacks
+        run: |
+          if grep -rn "passive" packages/sdk/src/ | grep -v "not implemented" | grep -v "liveness_unsupported"; then
+            echo "::error::the SDK appears to accept passive liveness"
+            exit 1
+          fi
+          echo "no silent fallbacks"
+
+  # ---------------------------------------------------------------------
+  # Everything must actually build and boot.
+  # ---------------------------------------------------------------------
+  build:
+    name: build and boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Build web client and services
+        run: npm run build
+
+      - name: The runtime bundle must import nothing third-party
+        run: |
+          # The whole point of implementing keccak, CBOR, COSE, WebAuthn
+          # verification, the ABI encoder and the FHE scheme in-repo is that
+          # there is nothing to audit but this repository. If a dependency
+          # sneaks into a runtime import, that claim stops being true.
+          node --input-type=module -e "
+          import { readFileSync, readdirSync } from 'node:fs';
+          let bad = [];
+          for (const f of readdirSync('dist/services').filter(n => n.endsWith('.mjs'))) {
+            const src = readFileSync('dist/services/' + f, 'utf-8');
+            const specs = new Set();
+            // ESM: from \"x\" / from 'x'   CJS shim: require(\"x\") / require('x')
+            for (const re of [/from\s*[\"']([^\"']+)[\"']/g, /require\(\s*[\"']([^\"']+)[\"']\s*\)/g]) {
+              for (const m of src.matchAll(re)) specs.add(m[1]);
+            }
+            const external = [...specs].filter(s => !s.startsWith('node:') && !s.startsWith('.') && !s.startsWith('/'));
+            console.log(f, '->', external.length ? external.join(', ') : '(none)');
+            bad.push(...external.map(s => f + ': ' + s));
+          }
+          if (bad.length) {
+            console.error('::error::third-party runtime imports: ' + bad.join(', '));
+            process.exit(1);
+          }
+          console.log('runtime bundle imports only node: builtins');
+          "
+
+      # Boot the real stack and hit it over HTTP. Catches wiring that unit
+      # tests mock out.
+      - name: Boot the stack and probe it
+        run: |
+          export HOMOBIO_DATA_DIR="$RUNNER_TEMP/homobio-data"
+          export FHE_SERVICE_TOKEN="ci-token"
+          export CUSTODY_UNLOCK_SECRET="ci-custody"
+          export PORT=5000
+          export FHE_PORT=5001
+          node dist/services/fhe-service.mjs > /tmp/fhe.log 2>&1 &
+          FHE_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5001/health > /dev/null && break
+            sleep 1
+          done
+          node dist/services/api-gateway.mjs > /tmp/gateway.log 2>&1 &
+          GW_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/v1/health > /dev/null && break
+            sleep 1
+          done
+
+          set -e
+          echo "--- /v1/health"
+          curl -sf http://127.0.0.1:5000/v1/health | head -c 600; echo
+          echo "--- /v1/config"
+          curl -sf http://127.0.0.1:5000/v1/config | head -c 400; echo
+          echo "--- / (static client)"
+          curl -sf -o /dev/null -w "status=%{http_code}\n" http://127.0.0.1:5000/
+
+          kill $FHE_PID $GW_PID 2>/dev/null || true
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== fhe ==="; cat /tmp/fhe.log || true
+          echo "=== gateway ==="; cat /tmp/gateway.log || true

@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+#
+# Build stage: compile every TypeScript entry point into a self-contained ESM
+# bundle. The runtime image gets NO source, NO devDependencies and NO build
+# tooling.
+
+FROM node:22-alpine AS build
+
+WORKDIR /app
+
+# Manifests first so the dependency layer caches across source-only changes.
+COPY package.json package-lock.json* ./
+COPY packages/ ./packages/
+COPY services/ ./services/
+COPY apps/ ./apps/
+COPY scripts/ ./scripts/
+COPY tsconfig.json vitest.config.ts ./
+
+# `npm ci` needs the workspace package.json files to resolve the graph.
+RUN npm ci --ignore-scripts
+
+# Build the services and the web client.
+RUN node scripts/build.mjs all
+
+
+# ---------------------------------------------------------------------------
+
+FROM node:22-alpine AS runtime
+
+# tini reaps zombies and forwards SIGTERM, so the graceful-shutdown handlers in
+# main.ts actually run on `docker stop`.
+RUN apk add --no-cache tini
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Compiled bundles plus the static client. Nothing else from the build stage.
+COPY --from=build /app/dist/services/ ./dist/services/
+COPY --from=build /app/apps/web/dist/ ./apps/web/dist/
+
+# The gateway resolves paths relative to cwd and writes state here.
+RUN mkdir -p /app/.data && chown -R node:node /app
+USER node
+
+VOLUME ["/app/.data"]
+EXPOSE 5000
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/services/api-gateway.mjs"]

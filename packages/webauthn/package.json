@@ -1,16 +1,10 @@
-{
+﻿{
   "name": "@homobio/webauthn",
-  "version": "1.0.0",
-  "description": "WebAuthn Passkey registration, assertion, and cryptographic transaction binding",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc"
-  },
-  "dependencies": {
-    "@homobio/protocol-types": "workspace:*"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.3"
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

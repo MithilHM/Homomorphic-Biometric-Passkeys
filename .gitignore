@@ -4,6 +4,21 @@ dist/
 build/
 .npm/
 
+# Runtime state: FHE key material, committee shares, credential store.
+# Committing these would hand a reader the ability to decrypt every enrolled
+# template. `npm run vectors` and `npm run bench` regenerate the files that
+# DO belong in the repository.
+.data/
+*.local
+
+# Generated contract build output (regenerate with `npm run compile:contracts`).
+contracts/artifacts/
+contracts/out/
+cache_forge/
+out/
+lib/forge-std/
+broadcast/
+
 # Python
 __pycache__/
 *.py[cod]

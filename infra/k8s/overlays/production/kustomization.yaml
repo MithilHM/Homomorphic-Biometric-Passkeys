@@ -1,0 +1,73 @@
+# Production overlay.
+#
+#   kubectl apply -k infra/k8s/overlays/production
+#
+# Adds an ingress, resource reservations and a disruption budget on top of the
+# base manifests. Secrets are NOT overridden here — supply them with an external
+# secrets manager rather than committing them to a ConfigMap.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: homobio
+
+resources:
+  - ../../base.yaml
+
+patches:
+  # Production images are pinned, not floating tags.
+  - target:
+      kind: Deployment
+      name: fhe-coprocessor
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: ghcr.io/example/homobio-fhe-coprocessor:v2.0.0
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: ghcr.io/example/homobio-gateway:v2.0.0
+
+  - target:
+      kind: Deployment
+      name: fhe-coprocessor
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "2"
+            memory: 2Gi
+          limits:
+            cpu: "8"
+            memory: 8Gi
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: homobio
+  annotations:
+    # WebAuthn requires a secure context, so TLS is not optional here.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.example.com
+      secretName: homobio-tls
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 5000

@@ -1,16 +1,49 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "types": ["node"],
+
     "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "allowJs": false,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@homobio/crypto-utils": ["packages/crypto-utils/src/index.ts"],
+      "@homobio/protocol-types": ["packages/protocol-types/src/index.ts"],
+      "@homobio/fhe": ["packages/fhe/src/index.ts"],
+      "@homobio/webauthn": ["packages/webauthn/src/index.ts"],
+      "@homobio/biometric-client": ["packages/biometric-client/src/index.ts"],
+      "@homobio/userop": ["packages/userop/src/index.ts"],
+      "@homobio/http-kit": ["packages/http-kit/src/index.ts"],
+      "@homobio/store": ["packages/store/src/index.ts"],
+      "@homobio/sdk/envelope": ["packages/sdk/src/envelope.ts"],
+      "@homobio/sdk": ["packages/sdk/src/index.ts"]
+    }
   },
-  "exclude": ["node_modules", "dist", "build"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "services/*/src/**/*.ts",
+    "services/*/test/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/test/**/*.ts",
+    "scripts/**/*.ts",
+    "contracts/test/**/*.ts"
+  ],
+  "exclude": ["node_modules", "**/dist/**", "**/build/**"]
 }

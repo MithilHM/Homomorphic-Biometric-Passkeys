@@ -1,0 +1,83 @@
+{
+  "generatedBy": "scripts/gen-vectors.ts",
+  "note": "Regenerate with `npm run vectors`; every field here is checked by the test suite.",
+  "authorization": {
+    "description": "keccak256(abi.encodePacked('HOMOBIO/AUTH-V1', ...)) as implemented in contracts/protocol/AuthDomain.sol",
+    "fields": {
+      "version": 1,
+      "wallet": "0x1111111111111111111111111111111111111111",
+      "chainId": 143,
+      "userOpHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sessionId": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+      "policyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "templateVersion": 3,
+      "fheKeyVersion": 2,
+      "decision": true,
+      "thresholdBps": 700000,
+      "resultCommitment": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "issuedAt": 1791370000,
+      "expiresAt": 1791370180,
+      "proofSystem": 1,
+      "verifierVersion": 1,
+      "decisionProgramHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "sessionKey": {
+    "description": "keccak256 of the scoped session key, mirrored by AuthDomain.sessionKeyHash",
+    "fields": {
+      "sessionKey": "0x2222222222222222222222222222222222222222",
+      "wallet": "0x1111111111111111111111111111111111111111",
+      "chainId": 143,
+      "validUntil": 1791374000,
+      "maxValuePerTxWei": "1000000000000000000",
+      "nonceDomain": 1,
+      "allowedTargets": [
+        "0x3333333333333333333333333333333333333333"
+      ],
+      "allowedSelectors": [
+        "0x12345678"
+      ]
+    }
+  },
+  "userOperation": {
+    "description": "ERC-4337 v0.7 keccak256(abi.encode(keccak256(abi.encode(op)), entryPoint, chainId))",
+    "entryPoint": "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+    "chainId": 143,
+    "operation": {
+      "sender": "0x1111111111111111111111111111111111111111",
+      "nonce": "0x00",
+      "initCode": "0x",
+      "callData": "0xb9059cbb000000000000000000000000000000000000000000000000000000000000dead",
+      "callGasLimit": "0x61a80",
+      "verificationGasLimit": "0xdbba0",
+      "preVerificationGas": "0x1d4c0",
+      "maxPriorityFeePerGas": "0x59682f00",
+      "maxFeePerGas": "0x6fc23ac0",
+      "paymasterAndData": "0x",
+      "signature": "0x48000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "fhe": {
+    "description": "parameter set the off-chain services and the browser must agree on",
+    "params": {
+      "engine": "rlwe-negacyclic-d1",
+      "ringDimension": 1024,
+      "modulus": "1152921504606877697",
+      "scaleBits": 18,
+      "embeddingDimension": 128,
+      "securityLevelBits": 128,
+      "encodingVersion": 1
+    },
+    "metric": "cosine-similarity",
+    "templateLayout": "high",
+    "queryLayout": "low",
+    "decisionProgramHash": "6c8e738817e229c883713c54fe46ea36c2c48fec7d129e76f3877631ea3c2f21"
+  },
+  "expected": {
+    "authorizationHash": "4845dbfc9330af205e5b8fd038ca581ee94987f51c98f52e8c66b1bb3c5c631f",
+    "sessionKeyHash": "d70d2430151f9d377c57ab91084fe99cef9ac1e916c630ac6c3adcc8ee6ccb43",
+    "userOpHash": "2319b5d41ba9b2c07aa15090a848bc4370b37e90951a14ee156d46a008127b05",
+    "resultCommitment": "9501c0e41150ae0916d1bcb01d9e2b7887f2ba398b1b96ddbdf37b145465c09a",
+    "envelopeHash": "9c090b026fc0306fb5706fb7dff00e2187b4099e107fc9d0c948f1e88da1dd87"
+  }
+}

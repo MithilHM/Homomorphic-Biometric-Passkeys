@@ -1,42 +1,114 @@
-version: '3.8'
+# Homomorphic Biometric Passkeys — local stack.
+#
+#   docker compose up -d
+#
+# The coprocessor MUST come up first: it generates the FHE key set and writes
+# committee shares 1 and 2 to the shared volume, and the gateway exits
+# immediately if it cannot reach it. `depends_on` with `condition:
+# service_healthy` enforces that ordering rather than leaving it to chance.
+
+name: homobio
 
 services:
-  api-gateway:
-    build:
-      context: .
-      dockerfile: services/api-gateway/Dockerfile
-    ports:
-      - "5000:5000"
-    environment:
-      - PORT=5000
-      - FHE_SERVICE_URL=http://fhe-coprocessor:5001
-      - REDIS_URL=redis://redis:6379
-      - MONAD_RPC=https://testnet-rpc.monad.xyz
-      - CHAIN_ID=143
-    depends_on:
-      - fhe-coprocessor
-      - redis
-    restart: unless-stopped
-
   fhe-coprocessor:
     build:
-      context: .
-      dockerfile: services/fhe-service/Dockerfile
-    ports:
-      - "5001:5001"
+      context: ..
+      dockerfile: infra/docker/Dockerfile.fhe
+    image: homobio/fhe-coprocessor:local
+    restart: unless-stopped
     environment:
-      - PORT=5001
-      - RING_DIM=8192
-      - MULT_DEPTH=5
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+      NODE_ENV: ${NODE_ENV:-development}
+      FHE_PORT: "5001"
+      FHE_SERVICE_TOKEN: ${FHE_SERVICE_TOKEN:?FHE_SERVICE_TOKEN must be set}
+      FHE_ERROR_BOUND: ${FHE_ERROR_BOUND:-0.001953125}
+      FHE_REUSE_KEYS: ${FHE_REUSE_KEYS:-false}
+      CHAIN_ID: ${CHAIN_ID:-143}
+      HOMOBIO_DATA_DIR: /app/.data
     volumes:
-      - redis_data:/data
+      # Shared with the gateway: the key set and the committee shares live here.
+      - homobio-data:/app/.data
+    # Deliberately NOT published to the host. The coprocessor is reachable only
+    # from the gateway over the internal network, behind its service token.
+    expose:
+      - "5001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - homobio
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.gateway
+    image: homobio/gateway:local
     restart: unless-stopped
+    depends_on:
+      fhe-coprocessor:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: "5000"
+      HOMOBIO_DATA_DIR: /app/.data
+      FHE_SERVICE_URL: http://fhe-coprocessor:5001
+      FHE_SERVICE_TOKEN: ${FHE_SERVICE_TOKEN:?FHE_SERVICE_TOKEN must be set}
+      FHE_ERROR_BOUND: ${FHE_ERROR_BOUND:-0.001953125}
+      CHAIN_ID: ${CHAIN_ID:-143}
+      CHAIN_NAME: ${CHAIN_NAME:-Monad Testnet}
+      MONAD_RPC: ${MONAD_RPC:-https://testnet-rpc.monad.xyz}
+      MONAD_ENTRY_POINT: ${MONAD_ENTRY_POINT:-0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789}
+      ACCOUNT_FACTORY_ADDRESS: ${ACCOUNT_FACTORY_ADDRESS:-}
+      AUTHORIZATION_VERIFIER_ADDRESS: ${AUTHORIZATION_VERIFIER_ADDRESS:-}
+      PROOF_VERIFIER_REGISTRY_ADDRESS: ${PROOF_VERIFIER_REGISTRY_ADDRESS:-}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
+      WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-Homomorphic Biometric Passkeys}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-http://localhost:5000}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5000}
+      DEFAULT_POLICY_ID: ${DEFAULT_POLICY_ID:-policy-standard-v1}
+      MODEL_VERSION: ${MODEL_VERSION:-rp-canonical-v1}
+      RELAYER_DRY_RUN: ${RELAYER_DRY_RUN:-true}
+      BUNDLER_URL: ${BUNDLER_URL:-}
+      CUSTODY_UNLOCK_SECRET: ${CUSTODY_UNLOCK_SECRET:?CUSTODY_UNLOCK_SECRET must be set}
+      CUSTODY_UNLOCK_ON_BOOT: ${CUSTODY_UNLOCK_ON_BOOT:-true}
+      PROOF_SERVICE_SECRET_PEM: ${PROOF_SERVICE_SECRET_PEM:-}
+    ports:
+      - "${GATEWAY_PORT:-5000}:5000"
+    volumes:
+      - homobio-data:/app/.data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5000/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - homobio
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+networks:
+  homobio:
+    driver: bridge
 
 volumes:
-  redis_data:
+  homobio-data:
+    driver: local

@@ -1,0 +1,21 @@
+# Normalise line endings in the repository; check them out per-platform.
+* text=auto eol=lf
+
+# Solidity is parsed by solc, which rejects a UTF-8 BOM. Force LF and no BOM.
+*.sol text eol=lf working-tree-encoding=UTF-8
+
+# Python sources must stay UTF-8 without BOM as well.
+*.py text eol=lf working-tree-encoding=UTF-8
+
+*.ts text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.jpg binary

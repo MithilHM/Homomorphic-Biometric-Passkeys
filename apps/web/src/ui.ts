@@ -1,0 +1,123 @@
+/**
+ * Minimal view layer.
+ *
+ * A virtual-node renderer rather than a framework: the whole client is one
+ * auditable bundle with no third-party runtime code, which is a supply-chain
+ * decision as much as a size one (PRD section 29, compromised frontend).
+ */
+
+export type VChild = string | number | boolean | null | undefined | VNode;
+
+export interface VNode {
+  tag: string;
+  className?: string;
+  text?: string;
+  children?: VChild | VChild[];
+  onClick?: () => void;
+  onInput?: (value: string) => void;
+  dataset?: Record<string, string>;
+  id?: string;
+  role?: string;
+  /** Any other HTML attribute; rendered verbatim as a string. */
+  [attribute: string]: unknown;
+}
+
+const propertyMap: Record<string, string> = {
+  className: "class",
+  for: "htmlFor",
+  spellcheck: "spellcheck",
+  tabIndex: "tabIndex",
+  ariaLabel: "aria-label",
+  ariaSelected: "aria-selected",
+  playsInline: "playsinline",
+  muted: "muted",
+};
+
+export function render(node: VNode | string | number): Node {
+  if (typeof node !== "object" || node === null) return document.createTextNode(String(node));
+
+  const element = document.createElement(node.tag);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "children" || key === "onClick" || key === "onInput" || key === "dataset") continue;
+    if (value === undefined || value === null || value === false) continue;
+
+    const attribute = propertyMap[key] ?? key;
+    if (attribute === "value" && element instanceof HTMLInputElement) {
+      element.value = String(value);
+      continue;
+    }
+    if (attribute === "max" && element instanceof HTMLProgressElement) {
+      element.max = Number(value);
+      continue;
+    }
+    if (key === "text") {
+      element.textContent = String(value);
+      continue;
+    }
+    element.setAttribute(attribute, String(value));
+  }
+
+  if (node.dataset) {
+    for (const [key, value] of Object.entries(node.dataset)) element.dataset[key] = value;
+  }
+  if (node.onClick) element.addEventListener("click", node.onClick);
+  if (node.onInput) {
+    element.addEventListener("input", (event) => {
+      const target = event.target as HTMLInputElement | null;
+      node.onInput?.(target?.value ?? "");
+    });
+  }
+
+  for (const child of childrenOf(node)) {
+    if (child === undefined || child === null || child === false) continue;
+    element.appendChild(typeof child === "object" ? render(child) : document.createTextNode(String(child)));
+  }
+  return element;
+}
+
+function childrenOf(node: VNode): VChild[] {
+  if (node.children === undefined || node.children === null) return [];
+  return Array.isArray(node.children) ? node.children : [node.children];
+}
+
+/**
+ * Replace a container's contents.
+ *
+ * Media elements are preserved across renders: recreating <video> would drop
+ * the camera stream on every state change.
+ */
+export function mount(container: HTMLElement, node: VNode): void {
+  const keep = new Map<string, Element>();
+  for (const child of Array.from(container.children)) {
+    if (child instanceof HTMLVideoElement || child instanceof HTMLCanvasElement) {
+      keep.set(child.id, child);
+    }
+  }
+
+  const build = (child: VChild): Node => {
+    if (child === undefined || child === null || child === false) return document.createComment("");
+    if (typeof child !== "object") return document.createTextNode(String(child));
+    if (child.id && keep.has(child.id)) {
+      const original = keep.get(child.id)!;
+      keep.delete(child.id);
+      return original;
+    }
+    return render(child);
+  };
+
+  const fragment = document.createDocumentFragment();
+  for (const child of childrenOf(node)) fragment.appendChild(build(child));
+
+  container.replaceChildren(fragment);
+  container.setAttribute("aria-busy", "false");
+}
+
+/** Announce a message to assistive technology without stealing focus. */
+export function announce(message: string): void {
+  const region = document.getElementById("live-region");
+  if (!region) return;
+  region.textContent = "";
+  window.setTimeout(() => {
+    region.textContent = message;
+  }, 30);
+}

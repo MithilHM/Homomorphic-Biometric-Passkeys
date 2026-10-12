@@ -1,16 +1,10 @@
-{
-  "name": "@homobio/userop",
-  "version": "1.0.0",
-  "description": "ERC-4337 UserOperation builder, signer, and paymaster integration for Monad",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc"
-  },
-  "dependencies": {
-    "@homobio/protocol-types": "workspace:*"
-  },
-  "devDependencies": {
-    "typescript": "^5.3.3"
-  }
+﻿{
+    "version":  "2.0.0",
+    "name":  "@homobio/userop",
+    "main":  "./src/index.ts",
+    "exports":  {
+                    ".":  "./src/index.ts"
+                },
+    "type":  "module",
+    "private":  true
 }

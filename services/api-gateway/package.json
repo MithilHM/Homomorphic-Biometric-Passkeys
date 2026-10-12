@@ -1,28 +1,10 @@
-{
-  "name": "@homobio/api-gateway",
-  "version": "1.0.0",
-  "description": "API Gateway for Homomorphic Biometric Passkeys",
-  "main": "dist/server.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts"
-  },
-  "dependencies": {
-    "@homobio/protocol-types": "workspace:*",
-    "@homobio/challenge-service": "workspace:*",
-    "@homobio/webauthn-service": "workspace:*",
-    "@homobio/proof-service": "workspace:*",
-    "@homobio/relayer-service": "workspace:*",
-    "@homobio/crypto-utils": "workspace:*",
-    "@homobio/webauthn": "workspace:*",
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/cors": "^2.8.17",
-    "@types/node": "^20.11.0",
-    "typescript": "^5.3.3"
-  }
+﻿{
+    "version":  "2.0.0",
+    "name":  "@homobio/api-gateway",
+    "main":  "./src/index.ts",
+    "exports":  {
+                    ".":  "./src/index.ts"
+                },
+    "type":  "module",
+    "private":  true
 }

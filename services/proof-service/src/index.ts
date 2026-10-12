@@ -1,95 +1,177 @@
 /**
- * Proof and Attestation Service
- * Produces signed biometric decision attestations & SP1 zkVM proof commitments
- * for on-chain validation by ERC-4337 smart account.
+ * Proof / Attestation Service (PRD sections 13-15)
+ *
+ * The MVP decision path is *threshold decryption + signed attestation*, not a
+ * zero-knowledge proof over the FHE arithmetic. That is an explicit, documented
+ * choice: we do NOT claim the CKKS/RLWE computation is ZK-verified. We separate
+ *   (1) privacy of the biometric input  -> FHE
+ *   (2) authorization                   -> WebAuthn
+ *   (3) verifiability of the decision   -> this service
+ *
+ * The service signs the canonical authorization hash with a secp256k1 key so
+ * the on-chain verifier can use `ecrecover`, and it holds one share of the FHE
+ * decryption committee.
  */
 
-import { BiometricAttestation } from '@homobio/protocol-types';
-import * as crypto from 'crypto';
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from "node:crypto";
+import { bytesToHex, hexToBytes, keccak256, keccak256Hex, nowSeconds } from "@homobio/crypto-utils";
+import {
+  authorizationHashHex,
+  resultCommitmentHex,
+  similarityToBps,
+  type AuthorizationFields,
+  type BiometricAuthorization,
+  ProofSystem,
+} from "@homobio/protocol-types";
+
+const EIP191_PREFIX = Buffer.from("\x19Ethereum Signed Message:\n32", "utf-8");
+
+export interface CommitteeKey {
+  address: string;
+  publicKeyPem: string;
+}
 
 export class ProofService {
-  private keyPair: crypto.KeyPairSyncResult<string, string>;
+  private readonly privateKey: import("node:crypto").KeyObject;
+  private readonly publicKeyPem: string;
+  readonly address: string;
 
-  constructor() {
-    // Generate ECDSA P-256 keypair for attestation signing
-    this.keyPair = crypto.generateKeyPairSync('ec', {
-      namedCurve: 'prime256v1',
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    });
+  constructor(secretPem?: string) {
+    if (secretPem) {
+      this.privateKey = createPrivateKey(secretPem);
+      this.publicKeyPem = createPublicKey(this.privateKey).export({ type: "spki", format: "pem" }).toString();
+    } else {
+      const generated = generateKeyPairSync("ec", { namedCurve: "secp256k1" });
+      this.privateKey = generated.privateKey;
+      this.publicKeyPem = generated.publicKey.export({ type: "spki", format: "pem" }).toString();
+    }
+    this.address = publicKeyToAddress(this.publicKeyPem);
   }
 
-  public getPublicKey(): string {
-    return this.keyPair.publicKey;
+  committeeKey(): CommitteeKey {
+    return { address: this.address, publicKeyPem: this.publicKeyPem };
+  }
+
+  /** keccak256("\x19Ethereum Signed Message:\n32" || keccak256(digest)) */
+  static ethSignedDigest(digest: string): Buffer {
+    const inner = keccak256(hexToBytes(`0x${digest}`));
+    return Buffer.from(keccak256(Buffer.concat([EIP191_PREFIX, Buffer.from(inner)])));
   }
 
   /**
-   * Generate a tamper-resistant BiometricAttestation.
+   * Sign the canonical authorization hash.
+   *
+   * EIP-191 prefixing means the signature can never be replayed as a raw
+   * transaction on another chain.
    */
-  public generateAttestation(params: {
-    challengeId: string;
+  signAttestation(fields: AuthorizationFields): { attestationHash: string; signature: string } {
+    const attestationHash = authorizationHashHex(fields);
+    const prefixed = ProofService.ethSignedDigest(attestationHash);
+    const signature = cryptoSign("sha256", prefixed, { key: this.privateKey, dsaEncoding: "ieee-p1363" });
+    return { attestationHash, signature: `0x${signature.toString("hex")}` };
+  }
+  /**
+   * Build the authorization object the account consumes.
+   *
+   * Note what is NOT here: no image, no plaintext embedding, no plaintext
+   * distance. Only a decision bit, the threshold that was applied, and
+   * commitments to the ciphertexts that were compared.
+   */
+  authorize(input: {
     wallet: string;
-    operationHash: string;
-    distanceSatisfied: boolean;
-    thresholdUsed: number;
-    resultCommitment: string;
-    validitySeconds?: number;
-  }): BiometricAttestation {
-    const now = Math.floor(Date.now() / 1000);
-    const validUntil = now + (params.validitySeconds || 120); // 2 minutes validity
-    const attestationId = crypto.randomUUID();
+    chainId: number;
+    userOpHash: string;
+    sessionId: string;
+    policyHash: string;
+    templateVersion: number;
+    fheKeyVersion: number;
+    templateCommitment: string;
+    queryCommitment: string;
+    threshold: number;
+    decision: boolean;
+    issuedAt?: number;
+    ttlSeconds?: number;
+    proofSystem?: ProofSystem;
+    verifierVersion?: number;
+    decisionProgramHash: string;
+    version?: number;
+  }): BiometricAuthorization {
+    const issuedAt = input.issuedAt ?? nowSeconds();
+    const expiresAt = issuedAt + (input.ttlSeconds ?? 180);
 
-    const payload = [
-      attestationId,
-      params.challengeId,
-      params.wallet.toLowerCase(),
-      params.operationHash.toLowerCase(),
-      params.distanceSatisfied ? '1' : '0',
-      params.thresholdUsed.toString(),
-      params.resultCommitment,
-      validUntil.toString()
-    ].join(':');
-
-    const signer = crypto.createSign('SHA256');
-    signer.update(payload);
-    signer.end();
-    const signature = signer.sign(this.keyPair.privateKey, 'hex');
-
-    return {
-      attestationId,
-      challengeId: params.challengeId,
-      wallet: params.wallet.toLowerCase(),
-      operationHash: params.operationHash.toLowerCase(),
-      distanceSatisfied: params.distanceSatisfied,
-      thresholdUsed: params.thresholdUsed,
-      resultCommitment: params.resultCommitment,
-      coprocessorSignature: `0x${signature}`,
-      validUntil
+    const fields: AuthorizationFields = {
+      version: input.version ?? 1,
+      wallet: input.wallet.toLowerCase(),
+      chainId: input.chainId,
+      userOpHash: input.userOpHash.toLowerCase(),
+      sessionId: input.sessionId,
+      policyHash: input.policyHash,
+      templateVersion: input.templateVersion,
+      fheKeyVersion: input.fheKeyVersion,
+      decision: input.decision,
+      thresholdBps: similarityToBps(input.threshold),
+      resultCommitment: resultCommitmentHex({
+        sessionId: input.sessionId,
+        templateCommitment: input.templateCommitment,
+        queryCommitment: input.queryCommitment,
+        decision: input.decision,
+      }),
+      issuedAt,
+      expiresAt,
+      proofSystem: input.proofSystem ?? ProofSystem.ThresholdAttestation,
+      verifierVersion: input.verifierVersion ?? 1,
+      decisionProgramHash: input.decisionProgramHash,
     };
+
+    const { attestationHash, signature } = this.signAttestation(fields);
+    return { ...fields, attestationHash, signature };
   }
 
-  /**
-   * Verify an attestation's cryptographic signature.
-   */
-  public verifyAttestation(attestation: BiometricAttestation): boolean {
-    const payload = [
-      attestation.attestationId,
-      attestation.challengeId,
-      attestation.wallet.toLowerCase(),
-      attestation.operationHash.toLowerCase(),
-      attestation.distanceSatisfied ? '1' : '0',
-      attestation.thresholdUsed.toString(),
-      attestation.resultCommitment,
-      attestation.validUntil.toString()
-    ].join(':');
-
-    const rawSig = attestation.coprocessorSignature.startsWith('0x')
-      ? attestation.coprocessorSignature.slice(2)
-      : attestation.coprocessorSignature;
-
-    const verifier = crypto.createVerify('SHA256');
-    verifier.update(payload);
-    verifier.end();
-    return verifier.verify(this.keyPair.publicKey, Buffer.from(rawSig, 'hex'));
+  /** Local verification helper for the API gateway's submit path. */
+  verify(authorization: BiometricAuthorization, committeeKey: CommitteeKey): boolean {
+    if (authorizationHashHex(authorization) !== authorization.attestationHash) return false;
+    try {
+      const prefixed = ProofService.ethSignedDigest(authorization.attestationHash);
+      const raw = authorization.signature.startsWith("0x")
+        ? authorization.signature
+        : `0x${authorization.signature}`;
+      const signature = Buffer.from(hexToBytes(raw));
+      // Web3 signatures are raw r||s, which is exactly what `sign` produced.
+      return cryptoVerify(
+        "sha256",
+        prefixed,
+        { key: createPublicKey(committeeKey.publicKeyPem), dsaEncoding: "ieee-p1363" },
+        signature,
+      );
+    } catch {
+      return false;
+    }
   }
+}
+
+export function publicKeyToAddress(publicKeyPem: string): string {
+  const spki = createPublicKey(publicKeyPem).export({ type: "spki", format: "der" }) as Buffer;
+  // SubjectPublicKeyInfo for secp256k1 has a 23-byte prefix; the uncompressed
+  // point is the last 65 bytes and the address is the keccak256 tail.
+  const point = spki.subarray(spki.length - 65);
+  return `0x${bytesToHex(keccak256(point)).slice(-40)}`;
+}
+
+/**
+ * The public-input digest an SP1 program would commit to.
+ *
+ * Exposed so the circuit, the prover and the verifier all derive the same
+ * statement. The `Sp1` proof system is selectable but the service reports it as
+ * unavailable until a prover is configured â€” we never fabricate a "proof".
+ */
+export function sp1PublicInputsHash(fields: AuthorizationFields): string {
+  return keccak256Hex(
+    `HOMOBIO/SP1-PUBLIC-INPUTS-V1|${authorizationHashHex(fields)}|${fields.sessionId}|${fields.expiresAt}`,
+  );
 }
