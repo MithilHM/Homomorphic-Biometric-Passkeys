@@ -17,6 +17,7 @@ import { isWebAuthnSupported } from "@homobio/webauthn";
 import { MeraSessionManager, type MeraKeyRole, type MeraSessionKey, MERA_KEY_PRESETS } from "@homobio/sdk";
 import { PrivyPasskeyProvider } from "@homobio/privy-adapter";
 import { announce, mount, type VNode } from "./ui.js";
+import { ICONS } from "./icons.js";
 import { CameraController } from "./camera.js";
 import { FlowController } from "./flows.js";
 
@@ -138,14 +139,32 @@ export class App {
       children: [
         {
           tag: "div",
+          className: "brand",
           children: [
-            { tag: "h1", children: "Homomorphic Biometric Passkeys on Monad" },
+            { tag: "span", className: "logo-mark", html: ICONS.scan },
             {
-              tag: "span",
-              className: "chain",
-              children: config
-                ? `${config.chainName} · chain ${config.chainId} · EntryPoint ${short(config.entryPoint)}`
-                : "connecting…",
+              tag: "div",
+              children: [
+                { tag: "div", className: "wordmark", children: ["homobio", { tag: "span", className: "slash", text: "/" }, "passkeys"] },
+                {
+                  tag: "h1",
+                  children: [
+                    "Your face unlocks your wallet. ",
+                    { tag: "span", className: "hook", text: "Nobody sees your face." },
+                  ],
+                },
+                {
+                  tag: "div",
+                  className: "chain-row",
+                  children: config
+                    ? [
+                        { tag: "span", className: "badge ok", children: [{ tag: "span", className: "dot" }, `${config.chainName} · chain ${config.chainId}`] },
+                        { tag: "span", className: "badge", text: `EntryPoint ${short(config.entryPoint)}` },
+                        { tag: "span", className: "badge", text: `FHE ${config.fhe.engine} · N=${config.fhe.ringDimension}` },
+                      ]
+                    : [{ tag: "span", className: "badge", children: [{ tag: "span", className: "dot" }, "connecting…"] }],
+                },
+              ],
             },
           ],
         },
@@ -182,24 +201,71 @@ export class App {
   }
 
   private tabs(): VNode {
-    const tabs: Array<[AppState["tab"], string]> = [
-      ["onboard", "1 · Create wallet"],
-      ["authenticate", "2 · Authenticate"],
-      ["wallet", "3 · Smart account"],
-      ["mera", "4 · Mera (Many Keys)"],
-      ["diagnostics", "Diagnostics"],
+    const tabs: Array<[AppState["tab"], string, string]> = [
+      ["onboard", "1", "Create wallet"],
+      ["authenticate", "2", "Authenticate"],
+      ["wallet", "3", "Smart account"],
+      ["mera", "4", "Mera (Many Keys)"],
+      ["diagnostics", "✦", "Diagnostics"],
     ];
     return {
       tag: "div",
       className: "tabs",
       role: "tablist",
-      children: tabs.map(([id, label]) => ({
+      children: tabs.map(([id, step, label]) => ({
         tag: "button",
         role: "tab",
         ariaSelected: this.state.tab === id ? "true" : "false",
-        text: label,
         onClick: () => this.set({ tab: id, failure: undefined }),
+        children: [
+          { tag: "span", className: "step-num", text: step },
+          { tag: "span", text: label },
+        ],
       })),
+    };
+  }
+
+  /* ------------------------------ card headers ---------------------------- */
+
+  /** Eyebrow + icon heading shared by every card (marketing SectionHeading idiom). */
+  private cardHead(icon: string, eyebrow: string, title: string): VNode[] {
+    return [
+      { tag: "p", className: "eyebrow", text: eyebrow },
+      {
+        tag: "h2",
+        children: [
+          { tag: "span", className: "icon", html: icon },
+          { tag: "span", text: title },
+        ],
+      },
+    ];
+  }
+
+  /** Section heading atop each tab view (marketing eyebrow + title + lede). */
+  private viewHead(eyebrow: string, title: string, lede: string): VNode {
+    return {
+      tag: "div",
+      className: "view-head",
+      children: [
+        { tag: "p", className: "eyebrow", text: eyebrow },
+        { tag: "h2", className: "view-title", text: title },
+        { tag: "p", className: "lede", text: lede },
+      ],
+    };
+  }
+
+  /** Copy-to-clipboard chip (marketing CopyButton idiom). */
+  private copyButton(text: string): VNode {
+    return {
+      tag: "button",
+      className: "ghost copy-btn",
+      text: "Copy",
+      ariaLabel: "Copy to clipboard",
+      onClick: () => {
+        const done = () => this.set({ notice: { kind: "success", text: "Copied to clipboard." } });
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done).catch(done);
+        else done();
+      },
     };
   }
 
@@ -208,7 +274,7 @@ export class App {
       tag: "section",
       className: "card",
       children: [
-        { tag: "h2", children: "What happens to your face" },
+        ...this.cardHead(ICONS.eyeOff, "Privacy", "What happens to your face"),
         {
           tag: "p",
           className: "hint",
@@ -238,12 +304,17 @@ export class App {
       tag: "div",
       className: "grid",
       children: [
+        this.viewHead(
+          "Step 1 · Onboard",
+          "Create your wallet",
+          "One passkey becomes the key. Your face becomes the gate — encrypted before it ever leaves this device.",
+        ),
         this.consentCard(),
         {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Wallet address" },
+            ...this.cardHead(ICONS.key, "Identity", "Wallet address"),
             { tag: "p", className: "hint", children: "Derived from your passkey. No seed phrase exists anywhere." },
             {
               tag: "div",
@@ -269,7 +340,7 @@ export class App {
                 {
                   tag: "button",
                   className: "primary",
-                  text: this.state.busy ? "Working…" : "Create passkey",
+                  text: this.state.busy ? "Working…" : "Create passkey →",
                   disabled: this.state.busy || !isWebAuthnSupported(),
                   onClick: () => void this.flows.registerPasskey(),
                 },
@@ -302,7 +373,7 @@ export class App {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Devices" },
+            ...this.cardHead(ICONS.shieldCheck, "Devices", "Passkeys"),
             { tag: "p", className: "hint", children: "Every passkey that can authorize this wallet." },
             devices.length === 0
               ? { tag: "p", className: "hint", children: "No passkeys registered yet." }
@@ -320,7 +391,7 @@ export class App {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Biometric template" },
+            ...this.cardHead(ICONS.fingerprint, "Biometrics", "Biometric template"),
             {
               tag: "p",
               className: "hint",
@@ -382,11 +453,16 @@ export class App {
       tag: "div",
       className: "grid",
       children: [
+        this.viewHead(
+          "Step 2 · Authenticate",
+          "Authorize a transaction",
+          "Face, passkey and the exact operation — all three together, every single time.",
+        ),
         {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Authorize a transaction" },
+            ...this.cardHead(ICONS.lock, "Authorize", "Authorize a transaction"),
             { tag: "p", className: "hint", children: "Face, passkey and the exact operation are all required." },
             {
               tag: "div",
@@ -409,7 +485,7 @@ export class App {
                 {
                   tag: "button",
                   className: "primary",
-                  text: this.state.busy ? "Working…" : "Authenticate and submit",
+                  text: this.state.busy ? "Working…" : "Authenticate and submit →",
                   disabled: this.state.busy || !this.state.wallet,
                   onClick: () => void this.flows.authenticate(),
                 },
@@ -441,7 +517,7 @@ export class App {
       tag: "section",
       className: "card",
       children: [
-        { tag: "h2", children: "Camera" },
+        ...this.cardHead(ICONS.camera, "Camera", "Capture"),
         {
           tag: "p",
           className: "hint",
@@ -450,6 +526,7 @@ export class App {
         {
           tag: "div",
           className: "viewfinder",
+          dataset: { live: this.camera.streaming ? "true" : "false" },
           children: [
             {
               tag: "video",
@@ -458,6 +535,10 @@ export class App {
               playsInline: true,
               ariaLabel: "Live camera preview",
             },
+            { tag: "span", className: "corner tl" },
+            { tag: "span", className: "corner tr" },
+            { tag: "span", className: "corner bl" },
+            { tag: "span", className: "corner br" },
             {
               tag: "div",
               className: "overlay",
@@ -497,7 +578,7 @@ export class App {
         tag: "section",
         className: "card",
         children: [
-          { tag: "h2", children: "Wallet" },
+          ...this.cardHead(ICONS.wallet, "Wallet", "No wallet loaded"),
           { tag: "p", className: "hint", children: "Load an address on the Create wallet tab to see its state." },
         ],
       };
@@ -506,17 +587,22 @@ export class App {
       tag: "div",
       className: "grid",
       children: [
+        this.viewHead(
+          "Step 3 · Smart account",
+          "Account state",
+          "Live on Monad testnet. Sessions are single-use, recovery is timelocked, and no seed phrase exists anywhere.",
+        ),
         {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Account" },
+            ...this.cardHead(ICONS.wallet, "Wallet", "Account"),
             {
               tag: "dl",
               className: "kv",
               children: [
                 { tag: "dt", children: "Address" },
-                { tag: "dd", children: account.wallet },
+                { tag: "dd", children: [account.wallet, this.copyButton(account.wallet)] },
                 { tag: "dt", children: "State" },
                 { tag: "dd", children: stateBadge(account.state) },
                 { tag: "dt", children: "Policy" },
@@ -536,15 +622,15 @@ export class App {
           tag: "section",
           className: "card",
           children: [
-            { tag: "h2", children: "Contract deployment" },
+            ...this.cardHead(ICONS.cpu, "Deployment", "Contract deployment"),
             {
               tag: "dl",
               className: "kv",
               children: [
                 { tag: "dt", children: "Smart account" },
-                { tag: "dd", children: account.contract.address },
+                { tag: "dd", children: [account.contract.address, this.copyButton(account.contract.address)] },
                 { tag: "dt", children: "EntryPoint" },
-                { tag: "dd", children: account.contract.entryPoint },
+                { tag: "dd", children: [account.contract.entryPoint, this.copyButton(account.contract.entryPoint)] },
                 { tag: "dt", children: "Factory" },
                 { tag: "dd", children: account.contract.factory ?? "not deployed in this environment" },
                 { tag: "dt", children: "Verifier" },
@@ -566,10 +652,16 @@ export class App {
       tag: "div",
       className: "grid",
       children: [
+        this.viewHead(
+          "Step 4 · Mera",
+          "One passkey, many keys",
+          "Grant a scoped session key once — then transact instantly with zero face scans.",
+        ),
         {
           tag: "section",
           className: "card mera-hero-card",
           children: [
+            { tag: "p", className: "eyebrow", text: "Mera · One passkey, many keys" },
             {
               tag: "div",
               className: "row between",
@@ -608,6 +700,7 @@ export class App {
           tag: "section",
           className: "card",
           children: [
+            { tag: "p", className: "eyebrow", text: "Mera · Authorize" },
             { tag: "h2", children: "Authorize New Mera Sub-Key" },
             {
               tag: "p",
@@ -661,6 +754,7 @@ export class App {
           tag: "section",
           className: "card mera-keys-list",
           children: [
+            { tag: "p", className: "eyebrow", text: "Mera · Active keys" },
             { tag: "h2", children: `Active Sub-Keys (${keys.length})` },
             {
               tag: "p",
@@ -747,7 +841,7 @@ export class App {
                     { tag: "dt", children: "Key Used" },
                     { tag: "dd", children: this.state.lastMeraTx.keyTitle },
                     { tag: "dt", children: "UserOp Hash" },
-                    { tag: "dd", children: this.state.lastMeraTx.hash },
+                    { tag: "dd", children: [this.state.lastMeraTx.hash, this.copyButton(this.state.lastMeraTx.hash)] },
                     { tag: "dt", children: "Execution Mode" },
                     { tag: "dd", children: "0x53 MAGIC_SESSION envelope" },
                     { tag: "dt", children: "Execution Latency" },
@@ -767,40 +861,49 @@ export class App {
 
   private diagnosticsView(): VNode {
     const config = this.state.config;
+    const stats = (entries: Array<[string, string]>): VNode => ({
+      tag: "dl",
+      className: "stats",
+      children: entries.map(([label, value]) => ({
+        tag: "div",
+        className: "stat",
+        children: [
+          { tag: "dt", children: label },
+          { tag: "dd", children: value },
+        ],
+      })),
+    });
     return {
-      tag: "section",
-      className: "card",
+      tag: "div",
+      className: "grid",
       children: [
-        { tag: "h2", children: "Cryptographic parameters in use" },
-        { tag: "p", className: "hint", children: "These are the exact values the running system is using, not defaults." },
-        config
-          ? {
-              tag: "dl",
-              className: "kv",
-              children: [
-                { tag: "dt", children: "FHE engine" },
-                { tag: "dd", children: config.fhe.engine ?? "unavailable" },
-                { tag: "dt", children: "Ring dimension" },
-                { tag: "dd", children: String(config.fhe.ringDimension ?? "—") },
-                { tag: "dt", children: "Modulus" },
-                { tag: "dd", children: String(config.fhe.modulus ?? "—") },
-                { tag: "dt", children: "Fixed-point scale" },
-                { tag: "dd", children: `2^${config.fhe.scaleBits ?? "—"}` },
-                { tag: "dt", children: "Embedding dimension" },
-                { tag: "dd", children: String(config.model.embeddingDimension) },
-                { tag: "dt", children: "Model version" },
-                { tag: "dd", children: config.model.modelVersion },
-                { tag: "dt", children: "Key fingerprint" },
-                { tag: "dd", children: String(config.fhe.fingerprint ?? "—") },
-                { tag: "dt", children: "Error bound" },
-                { tag: "dd", children: String(config.fhe.errorBound ?? "—") },
-                { tag: "dt", children: "Decision program" },
-                { tag: "dd", children: short(config.decisionProgramHash) },
-                { tag: "dt", children: "Attestation committee" },
-                { tag: "dd", children: config.committeeAddress ?? "—" },
-              ],
-            }
-          : { tag: "p", className: "hint", children: "Gateway configuration is not loaded yet." },
+        this.viewHead(
+          "Diagnostics",
+          "Live parameters",
+          "Exactly what the running stack is using — committee, FHE parameters, EntryPoint. Not defaults.",
+        ),
+        {
+          tag: "section",
+          className: "card",
+          children: [
+            ...this.cardHead(ICONS.activity, "Diagnostics", "Cryptographic parameters in use"),
+            { tag: "p", className: "hint", children: "These are the exact values the running system is using, not defaults." },
+            config
+              ? stats([
+                  ["FHE engine", config.fhe.engine ?? "unavailable"],
+                  ["Ring dimension", String(config.fhe.ringDimension ?? "—")],
+                  ["Modulus", String(config.fhe.modulus ?? "—")],
+                  ["Fixed-point scale", `2^${config.fhe.scaleBits ?? "—"}`],
+                  ["Embedding dim", String(config.model.embeddingDimension)],
+                  ["Model", config.model.modelVersion],
+                  ["Key fingerprint", short(config.fhe.fingerprint ?? "—")],
+                  ["Error bound", String(config.fhe.errorBound ?? "—")],
+                  ["Decision program", short(config.decisionProgramHash)],
+                  ["Committee", short(config.committeeAddress ?? "—")],
+                ])
+              : { tag: "p", className: "hint", children: "Gateway configuration is not loaded yet." },
+          ],
+        },
       ],
     };
   }
@@ -812,7 +915,7 @@ export class App {
       tag: "section",
       className: "card",
       children: [
-        { tag: "h2", children: "Authentication state" },
+        ...this.cardHead(ICONS.activity, "Pipeline", "Authentication state"),
         {
           tag: "ol",
           className: "pipeline",
@@ -873,10 +976,15 @@ export class App {
 
   private footer(): VNode {
     return {
-      tag: "p",
+      tag: "footer",
       className: "footer",
-      children:
-        "Passkey = cryptographic authority. Biometric match = authorization factor. Neither alone can spend from this wallet.",
+      children: [
+        {
+          tag: "span",
+          children: "Passkey = cryptographic authority. Biometric match = authorization factor. Neither alone can spend from this wallet.",
+        },
+        { tag: "span", className: "mono", text: "homobio/passkeys · Monad chain 143" },
+      ],
     };
   }
 

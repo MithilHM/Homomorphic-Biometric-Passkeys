@@ -54,6 +54,12 @@ export function render(node: VNode | string | number): Node {
       element.textContent = String(value);
       continue;
     }
+    // Trusted inline markup (icons). Only ever set from static strings in
+    // `icons.ts` — never from network or user data.
+    if (key === "html") {
+      element.innerHTML = String(value);
+      continue;
+    }
     element.setAttribute(attribute, String(value));
   }
 
