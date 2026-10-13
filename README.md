@@ -285,6 +285,21 @@ supply `BUNDLER_URL` to actually submit.
 
 ---
 
+## Hackathon Sponsor Integrations
+
+### 1. Privy ($5,000 Bounty — Best Auth SDK Integration)
+- **Adapter Package:** [`packages/privy-adapter`](packages/privy-adapter)
+- **Role:** Replaces raw browser `navigator.credentials` glue with Privy-managed hardware P-256 passkey sync and embedded identity resolution (`did:privy:...`).
+- **Cryptographic Fusion:** When Privy yields an authenticator assertion, the client pipeline encrypts the camera-extracted 128-D biometric vector via RLWE (`packages/fhe`) on-device and binds the ciphertext envelope directly to the ERC-4337 UserOperation on Monad.
+- **Config:** Supply `PRIVY_APP_ID` in `.env` or run in headless zero-friction sandbox mode.
+
+### 2. Monad Foundation ($2,500 Bounty — "Mera: One Passkey, Many Keys")
+- **SDK Module:** [`packages/sdk/src/mera.ts`](packages/sdk/src/mera.ts)
+- **Role:** Proves how a single hardware passkey acts as the root cryptographic authority to issue, manage, and revoke multiple scoped sub-keys (e.g. Trading Bot 50 MON limit, AI Agent 5 MON limit, Gaming 1 MON limit) using `0x53` magic session envelopes.
+- **UI Walkthrough:** Switch to the **Mera (Many Keys)** tab in the web client to grant sub-keys and trigger gasless session operations.
+
+---
+
 ## License
 
 MIT
