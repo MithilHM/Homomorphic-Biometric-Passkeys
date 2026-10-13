@@ -152,7 +152,8 @@ contracts/
   modules/SessionKeyRegistry.sol, RecoveryRegistry.sol
   factory/, paymaster/, interfaces/
 
-apps/web/              vanilla-TS client, served by the gateway
+apps/web/              vanilla-TS client, served by the gateway (zero third-party deps)
+apps/landing/          React marketing site: DitherVeil hero, playground, live stack widget
 apps/demo/             7 end-to-end scenarios
 cryptography/vectors/  generated conformance vectors
 docs/                  spec, architecture, threat model, parameters, benchmarks
