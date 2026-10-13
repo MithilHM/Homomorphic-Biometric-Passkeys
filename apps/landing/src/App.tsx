@@ -1,9 +1,8 @@
 import { Suspense, lazy } from "react";
-import { Nav, Hero, Stats, HowItWorks, Honesty, Tiers, Docs, Faq, Footer, HERO_SRC } from "./components/Sections";
+import { Nav, Hero, Stats, HowItWorks, Honesty, Tiers, Docs, Faq, Footer } from "./components/Sections";
 import { SectionHeading, Reveal } from "./components/ui";
 
-// Below-fold, canvas-heavy sections split out of the initial chunk.
-const Playground = lazy(() => import("./components/Playground"));
+// Below-fold section split out of the initial chunk.
 const StackStatus = lazy(() => import("./components/StackStatus"));
 
 function SectionFallback({ label }: { label: string }) {
@@ -29,20 +28,6 @@ export default function App() {
         <Stats />
         <HowItWorks />
         <Honesty />
-        <section id="playground" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
-          <Reveal>
-            <SectionHeading
-              eyebrow="Interactive"
-              title="The veil, tunable"
-              lede="The same component behind the hero. Diffusion, duotone, reveal geometry — all live."
-            />
-          </Reveal>
-          <Reveal className="mt-10">
-            <Suspense fallback={<SectionFallback label="playground" />}>
-              <Playground src={HERO_SRC} />
-            </Suspense>
-          </Reveal>
-        </section>
         <div className="border-y border-border/60 bg-abyss/60">
           <section id="stack" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
             <Reveal>

@@ -1,7 +1,6 @@
 # @homobio/landing
 
-Marketing + docs landing page for Homomorphic Biometric Passkeys. React Bits
-style hero built around `DitherVeil`, plus a tunable playground and a live
+Product site for the face-unlock wallet. Canvas-dither hero, live
 gateway-status widget.
 
 **Separate from `apps/web` on purpose:** the shipped wallet client stays

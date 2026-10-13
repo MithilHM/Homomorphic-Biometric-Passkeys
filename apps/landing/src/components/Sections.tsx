@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   Camera,
   Code2,
-  Cpu,
   EyeOff,
   FileText,
   Fingerprint,
@@ -12,6 +11,7 @@ import {
   ScanFace,
   ShieldAlert,
   ShieldCheck,
+  Smartphone,
   Users,
   Vault,
   XCircle,
@@ -29,9 +29,8 @@ const doc = (p: string) => `${REPO}/blob/main/${p}`;
 
 const NAV = [
   { href: "#how", label: "How it works" },
-  { href: "#honesty", label: "Honesty" },
-  { href: "#playground", label: "Playground" },
-  { href: "#stack", label: "Live stack" },
+  { href: "#honesty", label: "Honest limits" },
+  { href: "#stack", label: "Live status" },
   { href: "#faq", label: "FAQ" },
 ];
 
@@ -39,12 +38,12 @@ export function Nav() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-5">
-        <a href="#top" className="flex items-center gap-2.5" aria-label="Homomorphic Biometric Passkeys home">
+        <a href="#top" className="flex items-center gap-2.5" aria-label="Face wallet home">
           <span className="flex size-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <ScanFace size={19} aria-hidden />
           </span>
           <span className="font-mono text-sm font-semibold tracking-tight">
-            homobio<span className="text-accent">/</span>passkeys
+            face<span className="text-accent">/</span>wallet
           </span>
         </a>
         <nav aria-label="Primary" className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
@@ -89,35 +88,34 @@ export function Hero() {
         revealRadius={220}
         softness={0.6}
         linger={1}
-        alt="Dithered portrait — move your pointer to reveal it, like a biometric match revealing one bit"
+        alt="Portrait dissolving into pixels — move your pointer to reveal it"
         className="h-[94svh] min-h-[620px]"
       />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/70 via-transparent to-background" aria-hidden />
       <div className="absolute inset-0 mx-auto flex max-w-6xl flex-col justify-end px-5 pb-16">
         <div className="pointer-events-auto flex max-w-3xl flex-col gap-5">
           <div className="flex flex-wrap gap-2">
-            <Badge tone="green">ERC-4337 v0.7</Badge>
-            <Badge tone="green">FHE threshold 3-of-3</Badge>
-            <Badge tone="neutral">WebAuthn passkeys</Badge>
-            <Badge tone="neutral">Monad · chain 143</Badge>
+            <Badge tone="green">No seed phrases</Badge>
+            <Badge tone="green">Face unlock</Badge>
+            <Badge tone="neutral">You hold the keys</Badge>
           </div>
           <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
             Your face unlocks your wallet.
             <span className="text-accent-bright"> Nobody sees your face.</span>
           </h1>
           <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Seedless smart accounts where a WebAuthn passkey holds cryptographic authority and a homomorphic
-            face-match gates every transaction. The server multiplies ciphertexts — and learns exactly one bit.
+            A crypto wallet that opens with a look instead of a written-down secret. Your face is checked on
+            your own device, and the service that verifies you never receives anything it could recognize.
           </p>
           <div className="flex flex-wrap gap-3">
             <Button size="lg" onClick={() => document.querySelector("#stack")?.scrollIntoView({ behavior: "smooth" })}>
-              Run the live stack <ArrowRight size={17} aria-hidden />
+              Check the live service <ArrowRight size={17} aria-hidden />
             </Button>
-            <Button size="lg" variant="outline" onClick={() => window.open(doc("docs/protocol-spec.md"), "_blank", "noopener")}>
-              Read the protocol spec
+            <Button size="lg" variant="outline" onClick={() => window.open(doc("docs/architecture.md"), "_blank", "noopener")}>
+              How it works
             </Button>
           </div>
-          <p className="font-mono text-xs text-muted-foreground">Move your pointer — the veil reveals like a match decision.</p>
+          <p className="font-mono text-xs text-muted-foreground">Move your pointer — look closely, then it fades back.</p>
         </div>
       </div>
     </section>
@@ -128,12 +126,12 @@ export function Hero() {
 
 export function Stats() {
   return (
-    <section aria-label="Project statistics" className="border-b border-border/60">
+    <section aria-label="At a glance" className="border-b border-border/60">
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-5 py-12 sm:grid-cols-4">
-        <Reveal><Stat value="177" label="Tests passing" /></Reveal>
-        <Reveal><Stat value="N=1024" label="RLWE ring, depth-1" /></Reveal>
-        <Reveal><Stat value="3-of-3" label="Decryption committee" /></Reveal>
-        <Reveal><Stat value="<15s" label="Perceived auth time" /></Reveal>
+        <Reveal><Stat value="0" label="Seed phrases to write down" /></Reveal>
+        <Reveal><Stat value="1" label="Look to unlock" /></Reveal>
+        <Reveal><Stat value="0" label="Face data shared with servers" /></Reveal>
+        <Reveal><Stat value="48h" label="Safety delay on recovery" /></Reveal>
       </div>
     </section>
   );
@@ -142,12 +140,12 @@ export function Stats() {
 /* ---------------- how it works ---------------- */
 
 const STEPS = [
-  { icon: Camera, title: "Capture on-device", body: "Camera frames are detected, liveness-checked and embedded locally. Pixels never leave the device." },
-  { icon: Fingerprint, title: "Encrypt the vector", body: "The 128-d embedding is L2-normalised, quantised at 2^18 and encrypted under the FHE public key." },
-  { icon: Cpu, title: "Multiply ciphertexts", body: "The coprocessor multiplies enrolled × live ciphertexts. One ring multiply evaluates the whole cosine similarity." },
-  { icon: Vault, title: "Threshold decrypt", body: "Three share-holders jointly recover one scalar. Any subset sees uniform randomness — nothing usable." },
-  { icon: KeyRound, title: "Attest, don't prove", body: "The committee signs an EIP-191 attestation: decision bit plus commitments. No image, no embedding, no distance." },
-  { icon: Lock, title: "Validate + execute", body: "BiometricSmartAccount checks bindings, consumes the session in validation, and EntryPoint executes on Monad." },
+  { icon: Camera, title: "Look at your device", body: "Your camera checks it is really you, right there, right now — a photo held up to the lens fails." },
+  { icon: Smartphone, title: "Your device does the math", body: "Your phone turns the glance into a scrambled code locally. The picture itself is thrown away instantly." },
+  { icon: Fingerprint, title: "Only the scramble travels", body: "What leaves your device cannot be turned back into your face — not by us, not by anyone intercepting it." },
+  { icon: KeyRound, title: "Your device key approves", body: "The same tap that unlocks your phone signs the exact payment you reviewed. Nothing else can be swapped in." },
+  { icon: Lock, title: "One yes, one payment", body: "Each approval works exactly once, for exactly the payment you saw. Replays and tampered payments are rejected." },
+  { icon: Vault, title: "Lost phone? You are covered", body: "Recovery needs your backup key plus a 48-hour waiting period where you can cancel. It can lock, never steal." },
 ];
 
 export function HowItWorks() {
@@ -155,9 +153,9 @@ export function HowItWorks() {
     <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <Reveal>
         <SectionHeading
-          eyebrow="Pipeline"
-          title="Seven steps, zero plaintext off-device"
-          lede="Passkey equals authority; biometric match equals authorization condition. Neither factor alone can spend."
+          eyebrow="How it works"
+          title="A look replaces the secret notebook"
+          lede="Two things must agree before money moves: your face, and your device key. Either one alone can do nothing."
         />
       </Reveal>
       <ol className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -187,10 +185,10 @@ export function HowItWorks() {
 /* ---------------- honesty ---------------- */
 
 const HONEST = [
-  { icon: XCircle, title: "Not ZK-proven", body: "Threshold decryption plus signed attestation. We do not claim the homomorphic arithmetic is zero-knowledge verified." },
-  { icon: XCircle, title: "Not CKKS by default", body: "A real leveled RLWE scheme over Z_q[X]/(X^1024+1), depth 1, no bootstrapping. OpenFHE CKKS is an optional path." },
-  { icon: ShieldAlert, title: "Not production-hardened", body: "Partial decryptions are not MAC-checked yet; thresholds are provisional; liveness is active-only. All tracked openly." },
-  { icon: EyeOff, title: "Not passive liveness", body: "Randomised motion challenges — turn, blink, approach. A still photo fails; a serious deepfake needs the production path." },
+  { icon: XCircle, title: "We cannot see your face", body: "This cuts both ways: if something goes wrong on your device, we have no copy to help with. Your backup key is your safety net — set it up." },
+  { icon: ShieldAlert, title: "New tech, open limits", body: "The face check is getting stronger every release. Today it asks you to move and blink; dedicated spoofing gear is a known open item." },
+  { icon: EyeOff, title: "Close calls get a redo, not a guess", body: "If the check lands in the grey zone, it asks for one more glance instead of flipping a coin. Slightly slower, much safer." },
+  { icon: Users, title: "Recovery takes two days", body: "That delay is the security. If a recovery you did not start appears, you have 48 hours to cancel it from a device you still own." },
 ];
 
 export function Honesty() {
@@ -200,8 +198,8 @@ export function Honesty() {
         <Reveal>
           <SectionHeading
             eyebrow="Stated up front"
-            title="What this is not"
-            lede="The places this kind of project usually overclaims — documented before the first demo frame."
+            title="Honest limits"
+            lede="A wallet that holds money should tell you what it cannot do — before you trust it."
           />
         </Reveal>
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
@@ -229,19 +227,19 @@ export function Honesty() {
 /* ---------------- tiers ---------------- */
 
 const TIERS = [
-  { name: "Convenience", threshold: "0.62", desc: "Low-value flows, session keys allowed. Face plus passkey, short lifetimes.", icon: ShieldCheck },
-  { name: "Standard", threshold: "0.70", desc: "The default. Active liveness required, strict expiry, scoped delegation.", icon: Users },
-  { name: "High security", threshold: "0.80", desc: "Fresh scan every time, hardware-backed passkey preferred, no session keys.", icon: Vault },
+  { name: "Everyday", threshold: "Relaxed", desc: "Coffee money. A quick glance approves small payments; apps you trust can act within limits you set.", icon: ShieldCheck },
+  { name: "Standard", threshold: "Balanced", desc: "The default. Every payment needs a fresh glance plus your device key, with tight expiry.", icon: Users },
+  { name: "Maximum", threshold: "Strict", desc: "Life savings mode. Fresh glance, strongest device key, no shortcuts, no delegated apps.", icon: Vault },
 ];
 
 export function Tiers() {
   return (
-    <section aria-label="Policy tiers" className="mx-auto max-w-6xl px-5 py-20">
+    <section aria-label="Protection levels" className="mx-auto max-w-6xl px-5 py-20">
       <Reveal>
         <SectionHeading
-          eyebrow="Policy engine"
-          title="One passkey, many keys"
-          lede="Comparisons landing inside the noise band return indeterminate — a recapture, never a coin flip. Thresholds are provisional until measured on real data."
+          eyebrow="Your rules"
+          title="Dial strictness up or down"
+          lede="Small daily payments stay effortless; big moves demand everything. You choose per wallet."
         />
       </Reveal>
       <div className="mt-10 grid gap-4 md:grid-cols-3">
@@ -254,7 +252,7 @@ export function Tiers() {
                 </span>
                 <CardTitle>{t.name}</CardTitle>
                 <CardDescription>
-                  cosine threshold <span className="font-mono text-accent-bright">{t.threshold}</span>
+                  strictness <span className="font-mono text-accent-bright">{t.threshold}</span>
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -271,18 +269,18 @@ export function Tiers() {
 /* ---------------- docs ---------------- */
 
 const DOCS = [
-  { title: "Protocol spec", desc: "Normative byte-level encoding of every structure. TS and Solidity are two implementations of this document.", href: doc("docs/protocol-spec.md") },
-  { title: "Architecture", desc: "Services, data flow, trust boundaries. What each component sees — and what it must never see.", href: doc("docs/architecture.md") },
-  { title: "Threat model", desc: "Attacks, mitigations, and what is explicitly not solved. Read before deploying anything.", href: doc("docs/threat-model.md") },
-  { title: "Crypto parameters", desc: "Why N=1024, q, scale 2^18, dim 128 — every number benchmarked, none copied from an example.", href: doc("docs/crypto-parameters.md") },
+  { title: "Protocol spec", desc: "The exact byte-level rules both the app and the contracts implement.", href: doc("docs/protocol-spec.md") },
+  { title: "Architecture", desc: "Which part sees what — and what no part is ever allowed to see.", href: doc("docs/architecture.md") },
+  { title: "Threat model", desc: "What is defended, what is open, and what must hold before production.", href: doc("docs/threat-model.md") },
+  { title: "Crypto parameters", desc: "Every number benchmarked on real runs. Nothing copied from an example.", href: doc("docs/crypto-parameters.md") },
 ];
 
 export function Docs() {
   return (
-    <section aria-label="Documentation" className="border-t border-border/60">
+    <section aria-label="For developers" className="border-t border-border/60">
       <div className="mx-auto max-w-6xl px-5 py-20">
         <Reveal>
-          <SectionHeading eyebrow="Read the construction" title="Docs, not vibes" />
+          <SectionHeading eyebrow="For developers" title="Verify, don't trust us" lede="Everything above is backed by code and documents you can audit." />
         </Reveal>
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
           {DOCS.map((d) => (
@@ -312,19 +310,19 @@ export function Docs() {
 /* ---------------- faq ---------------- */
 
 const FAQS = [
-  { q: "Is my face stored on-chain?", a: "No. Only a keccak commitment of the ciphertext template touches the chain. Ciphertexts live in coprocessor storage; frames and embeddings never leave your device." },
-  { q: "Is the face match zero-knowledge proven?", a: "No — and we say so plainly. The decision path is 3-of-3 threshold decryption plus an EIP-191 attestation. A fully ZK-verified FHE pipeline is a research milestone, not a shipped claim." },
-  { q: "What happens near the threshold?", a: "The comparison lands in an indeterminate band sized by the measured engine error (2^-9). The server returns HTTP 422 and you capture a fresh sample. Borderline never becomes a coin flip." },
-  { q: "What if I lose my device?", a: "Recovery is delay-gated (48h floor, 30-day cap): it can only lock the account, never spend. The owner cancels anytime with a validated operation; finalization registers the new key on-chain." },
-  { q: "Which chain, and do I need gas?", a: "Monad (chain ID 143) via ERC-4337 v0.7 EntryPoint 0x5FF1…2789. A sponsorship paymaster covers gas for eligible accounts; the relayer runs in dry-run until a bundler is configured." },
-  { q: "Can one passkey cover many keys?", a: "Yes. The same authorization path mints scoped session keys (SessionKeyRegistry), registers backup devices, and drives timelocked recovery — one passkey, many delegations." },
+  { q: "Where is my face stored?", a: "Nowhere except your device, and only for the second it takes to check. There is no photo album of users on any server — there is nothing to leak." },
+  { q: "What if someone steals the scrambled code?", a: "It cannot be turned back into your face, and alone it unlocks nothing. Spending also needs your device key approving that exact payment." },
+  { q: "What if my look is borderline — bad light, new glasses?", a: "The wallet asks for one more glance instead of guessing. If your appearance changed for good, re-enroll in settings." },
+  { q: "What if I lose my phone?", a: "Start recovery with your backup key. Nothing moves for 48 hours, and you can cancel from any device you still own. After the wait, your new key takes over." },
+  { q: "Can apps use my wallet without asking each time?", a: "Only inside limits you set in advance — which apps, how much, until when. Anything outside pops up for a fresh glance." },
+  { q: "Do I need to buy crypto for fees?", a: "No. New wallets are sponsored, so your first transactions cost you nothing." },
 ];
 
 export function Faq() {
   return (
     <section id="faq" className="mx-auto max-w-3xl scroll-mt-20 px-5 py-20">
       <Reveal>
-        <SectionHeading eyebrow="FAQ" title="Asked like an auditor" />
+        <SectionHeading eyebrow="FAQ" title="Asked like a customer" />
       </Reveal>
       <Reveal className="mt-10">
         <Accordion items={FAQS} />
@@ -341,11 +339,11 @@ export function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-10 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-center gap-2">
           <ScanFace size={15} aria-hidden className="text-accent" />
-          Homomorphic Biometric Passkeys · MIT · Monad testnet
+          Face wallet · open source (MIT)
         </p>
         <p className="flex items-center gap-4">
           <a href={doc("docs/threat-model.md")} target="_blank" rel="noreferrer" className="transition-colors hover:text-foreground">
-            Threat model
+            Limits
           </a>
           <a href={REPO} target="_blank" rel="noreferrer" className="transition-colors hover:text-foreground">
             Source
