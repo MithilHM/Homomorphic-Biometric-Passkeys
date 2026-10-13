@@ -132,10 +132,16 @@ export class RlweScheme {
    *
    * (a.p2 + a.p1 s + a.p0 s^2)(b.p2 + b.p1 s + b.p0 s^2), discarding terms of
    * degree >= 3 (the scheme is depth 1, so this never occurs in a valid use).
+   *
+   * A product of two non-fresh ciphertexts would silently drop degree-3/4
+   * terms; refuse loudly instead of returning a corrupted ciphertext.
    */
   multiply(a: Ciphertext, b: Ciphertext): Ciphertext {
     const aHasQuadratic = a.p0.some((v) => v !== 0n);
     const bHasQuadratic = b.p0.some((v) => v !== 0n);
+    if (aHasQuadratic && bHasQuadratic) {
+      throw new Error("multiplicative depth exceeded: both operands are products");
+    }
     // [[a2b0, a2b1, a2b2], [a1b0, a1b1, a1b2], [a0b0, a0b1, a0b2]]
     // Terms of degree >= 3 are dropped: the scheme is depth 1.
     const m = aHasQuadratic || bHasQuadratic
@@ -178,6 +184,11 @@ export class RlweScheme {
 
   /** Recombine partial decryptions plus the public `p2` term into the plaintext. */
   static recombine(partials: Poly[], p2: Poly, n: number, q: bigint): Poly {
+    if (partials.length === 0) throw new Error("no partial decryptions to recombine");
+    for (const [i, partial] of partials.entries()) {
+      if (partial.length !== n) throw new Error(`partial decryption ${i} has the wrong length`);
+    }
+    if (p2.length !== n) throw new Error("ciphertext has the wrong length");
     const out: Poly = [...p2];
     for (const partial of partials) {
       for (let i = 0; i < n; i++) out[i] = (out[i] + partial[i]) % q;

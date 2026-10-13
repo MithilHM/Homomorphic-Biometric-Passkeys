@@ -26,9 +26,29 @@ const ACTIONS: Array<{ action: LivenessAction; instruction: string; tolerance: n
   { action: "move_closer", instruction: "Move a little closer to the camera", tolerance: 0.12 },
 ];
 
+const HOLD_STILL_DEFAULT_TOLERANCE = 5;
+
+/** Reject unknown actions and non-finite tolerances at construction (L7). */
+function sanitizeChallenge(challenge: LivenessChallenge): LivenessChallenge {
+  const known = ACTIONS.find((a) => a.action === challenge.action);
+  if (known) {
+    if (Number.isFinite(challenge.tolerance) && challenge.tolerance > 0) return { ...challenge };
+    return { ...known };
+  }
+  if (challenge.action === "hold_still") {
+    const tolerance = Number.isFinite(challenge.tolerance) && challenge.tolerance > 0
+      ? challenge.tolerance
+      : HOLD_STILL_DEFAULT_TOLERANCE;
+    return { action: "hold_still", instruction: challenge.instruction || "Hold still", tolerance };
+  }
+  const fallback = ACTIONS[0];
+  return { action: fallback.action, instruction: fallback.instruction, tolerance: fallback.tolerance };
+}
+
 export function randomChallenge(allowed?: LivenessAction[]): LivenessChallenge {
-  const pool = allowed ? ACTIONS.filter((a) => allowed.includes(a.action)) : ACTIONS;
-  const choice = pool[randomBytes(1)[0] % pool.length];
+  const pool = allowed && allowed.length > 0 ? ACTIONS.filter((a) => allowed.includes(a.action)) : ACTIONS;
+  const source = pool.length > 0 ? pool : ACTIONS;
+  const choice = source[randomBytes(1)[0] % source.length];
   return { action: choice.action, instruction: choice.instruction, tolerance: choice.tolerance };
 }
 
@@ -55,7 +75,7 @@ export class LivenessSession {
   private finished = false;
 
   constructor(options: LivenessSessionOptions = {}) {
-    this.challenge = options.challenge ?? randomChallenge();
+    this.challenge = sanitizeChallenge(options.challenge ?? randomChallenge());
     this.minFrames = options.minFrames ?? 6;
     this.maxFrames = options.maxFrames ?? 180;
   }
@@ -131,12 +151,15 @@ export class LivenessSession {
       };
     }
 
+    // L2: sufficient motion passes immediately — the old code returned
+    // `passed: final && passed`, so an early pass was reported as false while
+    // still marking the session finished, bricking `push()` forever after.
     this.finished = true;
     return {
-      passed: final && passed,
+      passed,
       challenge: this.challenge,
       observations: observations.metrics,
-      failureReason: final ? failureReason : undefined,
+      failureReason: passed ? undefined : failureReason,
     };
   }
 
@@ -156,18 +179,27 @@ export class LivenessSession {
     if (centres.length > 1) {
       const min = Math.min(...centres);
       const max = Math.max(...centres);
-      const frameWidth = frames[0].box.x + frames[0].box.width;
-      horizontalDrift = (max - min) / Math.max(1, frameWidth);
+      // L4: normalize by the face width, not by the box right-edge coordinate
+      // (which made the tolerance position-dependent: bypass on the left,
+      // false rejects on the right).
+      const faceWidth = frames[0].box.width;
+      horizontalDrift = (max - min) / Math.max(1, faceWidth);
     }
 
+    // L3: directional growth — the face must end up LARGER (closer), not just
+    // vary in size. max-min spread passes when backing away; last-vs-first
+    // does not.
     let areaGrowth = 0;
-    if (areas.length > 1) areaGrowth = (Math.max(...areas) - Math.min(...areas)) / Math.max(1, areas[0]);
+    if (areas.length > 1) areaGrowth = (areas[areas.length - 1] - areas[0]) / Math.max(1, areas[0]);
 
     // Blink detection: a local dip in eye-region luminance relative to the
     // surrounding frames. The window is centred on the candidate frame and
     // excludes the frame itself, so an isolated blink registers as one dip
     // rather than being averaged into its own baseline.
+    // L5: edge-triggered — one sustained closure is one event, not one per
+    // dark frame. A dip counts only when the previous frame was not a dip.
     let blinkCount = 0;
+    let prevWasDip = false;
     if (luminances.length >= 3) {
       for (let i = 1; i < luminances.length - 1; i++) {
         const neighbours: number[] = [];
@@ -175,7 +207,9 @@ export class LivenessSession {
           if (k !== i) neighbours.push(luminances[k]);
         }
         const baseline = neighbours.reduce((a, b) => a + b, 0) / neighbours.length;
-        if (baseline - luminances[i] > baseline * 0.15) blinkCount++;
+        const isDip = baseline - luminances[i] > baseline * 0.15;
+        if (isDip && !prevWasDip) blinkCount++;
+        prevWasDip = isDip;
       }
     }
 

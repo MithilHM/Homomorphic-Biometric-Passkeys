@@ -176,38 +176,50 @@ export class FlowController {
     }
 
     this.app.setStage("camera_ready");
+    // L1: enrollment runs through the liveness session — every sample is
+    // gated on a real capture and the session must pass before a template is
+    // built. A still photo can no longer enroll.
     const session = new BiometricCaptureSession();
     this.app.set({ livenessInstruction: session.instruction });
 
-    const captured: Array<{ vector: Float64Array; quality: number }> = [];
     const deadline = Date.now() + 20_000;
 
-    while (Date.now() < deadline && captured.length < ENROLL_SAMPLES) {
+    while (Date.now() < deadline && session.capturedSamples.length < ENROLL_SAMPLES) {
       const frame = this.app.camera.capture();
       if (!frame) {
         await sleep(80);
         continue;
       }
-      const analysis = analyzeFrame(frame, { extractEmbedding: true });
-      if (analysis.quality.acceptable && analysis.embedding) {
-        captured.push({ vector: analysis.embedding, quality: analysis.quality.score });
-        this.app.set({
-          progress: captured.length / ENROLL_SAMPLES,
-          stage: captured.length < ENROLL_SAMPLES ? "face_quality_ok" : "embedding_generated",
-        });
-      } else if (analysis.quality.reasons.includes("multiple_faces")) {
+      const pushed = session.push(frame);
+      if (pushed.quality.reasons.includes("multiple_faces")) {
         this.app.set({ busy: false });
         this.app.camera.stop();
         this.app.fail("multiple_faces");
         return;
       }
+      const count = session.capturedSamples.length;
+      if (count > 0) {
+        this.app.set({
+          progress: count / ENROLL_SAMPLES,
+          stage: count < ENROLL_SAMPLES ? "face_quality_ok" : "embedding_generated",
+        });
+      }
+      if (pushed.liveness?.passed && count >= ENROLL_SAMPLES) break;
       await sleep(60);
     }
 
     this.app.camera.stop();
     this.app.set({ livenessInstruction: undefined, progress: undefined });
 
-    if (captured.length < 3) {
+    const liveness = session.livenessResult ?? session.liveness.finish();
+    if (!liveness.passed) {
+      this.app.set({ busy: false });
+      this.app.fail("liveness_failed", liveness.failureReason ?? "could not confirm a live interaction");
+      return;
+    }
+
+    const captured = session.capturedSamples;
+    if (captured.length < ENROLL_SAMPLES) {
       this.app.set({ busy: false });
       this.app.fail("poor_quality", `only ${captured.length} usable samples were captured`);
       return;
@@ -216,6 +228,16 @@ export class FlowController {
     this.app.setStage("encrypting");
     try {
       const template = aggregateTemplate(captured);
+      // T3: refuse wildly inconsistent enrollments instead of logging and
+      // proceeding — a high spread means lighting/framing trouble, not a face.
+      if (template.intraClassSpread > 0.25 || template.rejectedSamples > captured.length / 2) {
+        this.app.set({ busy: false });
+        this.app.fail(
+          "poor_quality",
+          `captures were inconsistent (spread ${template.intraClassSpread.toFixed(3)}, ${template.rejectedSamples} rejected)`,
+        );
+        return;
+      }
       const engine = await this.ensureEngine();
       const ciphertext = engine.encryptVector(this.publicKey!, template.vector, EMBEDDING_DIMENSION, "high");
 
@@ -333,11 +355,10 @@ export class FlowController {
             const analysis = analyzeFrame(frame, { extractEmbedding: true });
             if (analysis.embedding) vector = analysis.embedding;
           }
-        } else {
-          // No camera in this environment: use a deterministic local capture so
-          // the encrypted path can still be exercised end to end.
-          vector = seededUnitVectorLocal(EMBEDDING_DIMENSION, 4242, 0.02);
         }
+        // L6: no synthetic fallback. Without a camera the loop simply expires
+        // and fails closed with liveness_failed below — a fixed vector must
+        // never satisfy the liveness step.
         if (!vector) await sleep(70);
       }
       this.app.camera.stop();

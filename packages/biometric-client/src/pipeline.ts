@@ -40,13 +40,16 @@ export function aggregateTemplate(samples: TemplateSample[], dimension = EMBEDDI
   let rejected = 0;
 
   for (const sample of sorted) {
+    // Slice to the negotiated dimension first, then normalize: the outlier
+    // test must compare unit vectors of equal length (T1).
+    const candidate = Float64Array.from(normalize(sample.vector.slice(0, dimension)));
     if (accepted.length === 0) {
-      accepted.push(Float64Array.from(normalize(sample.vector).slice(0, dimension)));
+      accepted.push(candidate);
       continue;
     }
     const centroid = meanVector(accepted);
-    if (dot(centroid, sample.vector) >= OUTLIER_THRESHOLD) {
-      accepted.push(Float64Array.from(sample.vector.slice(0, dimension)));
+    if (dot(centroid, candidate) >= OUTLIER_THRESHOLD) {
+      accepted.push(candidate);
     } else {
       rejected++;
     }
@@ -55,7 +58,7 @@ export function aggregateTemplate(samples: TemplateSample[], dimension = EMBEDDI
   const vector = meanVector(accepted);
   const spread =
     accepted.length > 1
-      ? Math.min(...accepted.map((v) => 1 - dot(v, vector)))
+      ? Math.max(...accepted.map((v) => 1 - dot(v, vector)))
       : 0;
 
   return {

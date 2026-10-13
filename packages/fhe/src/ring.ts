@@ -73,9 +73,10 @@ export class RingContext {
   rotate(a: bigint[], k: number): bigint[] {
     const out = this.zero();
     const n = this.n;
+    const steps = ((k % (2 * n)) + 2 * n) % (2 * n);
     for (let i = 0; i < n; i++) {
-      const j = (i + k) % n;
-      const target = i + k >= n ? (this.q - a[i]) % this.q : a[i];
+      const j = (i + steps) % n;
+      const target = i + steps >= n ? (this.q - a[i]) % this.q : a[i];
       out[j] = target;
     }
     return out;
@@ -86,14 +87,17 @@ export class RingContext {
    *
    * Implemented as a length-2N cyclic convolution with zero padding, then the
    * fold  result[i] = d[i] - d[i + N]  that turns X^N = -1 into X^N = 1.
+   *
+   * Inputs are reduced into [0, q) first: ternary secrets carry -1n entries
+   * and JS `%` keeps the sign, which would violate the file's own invariant.
    */
   mul(a: bigint[], b: bigint[]): bigint[] {
     const size = this.n * 2;
     const fa = new Array<bigint>(size).fill(0n);
     const fb = new Array<bigint>(size).fill(0n);
     for (let i = 0; i < this.n; i++) {
-      fa[i] = a[i];
-      fb[i] = b[i];
+      fa[i] = norm(a[i], this.q);
+      fb[i] = norm(b[i], this.q);
     }
     const psi2 = this.rootOfOrder(size);
     ntt(fa, psi2, this.q, false);
@@ -120,7 +124,7 @@ export class RingContext {
 
     const toNtt = (poly: bigint[]) => {
       const buf = new Array<bigint>(size).fill(0n);
-      for (let i = 0; i < this.n && i < poly.length; i++) buf[i] = poly[i];
+      for (let i = 0; i < this.n && i < poly.length; i++) buf[i] = norm(poly[i], this.q);
       ntt(buf, psi2, this.q, false);
       return buf;
     };
@@ -143,7 +147,8 @@ export class RingContext {
   /** Centered integer representative of a field element. */
   toSigned(value: bigint): bigint {
     const half = this.q >> 1n;
-    return value > half ? value - this.q : value;
+    const v = norm(value, this.q);
+    return v > half ? v - this.q : v;
   }
 
   private rootOfOrder(order: number): bigint {
@@ -157,4 +162,10 @@ export class RingContext {
     // needs, so no other order is ever requested.
     throw new Error(`unsupported NTT order ${order}`);
   }
+}
+
+/** Reduce into [0, q): JS `%` keeps the sign of negative dividends. */
+function norm(value: bigint, q: bigint): bigint {
+  const v = value % q;
+  return v < 0n ? v + q : v;
 }

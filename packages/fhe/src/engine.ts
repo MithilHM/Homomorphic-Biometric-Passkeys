@@ -135,6 +135,14 @@ export class HomomorphicEngine {
     if (key.ringDimension !== this.params.ringDimension || key.modulus !== this.params.modulus) {
       throw new Error("public key does not match the engine parameters");
     }
+    // B2: the fingerprint authenticates the bundle, but the engine must also
+    // refuse to operate under a parameter set it was not configured for.
+    if (key.engine !== this.params.engine) throw new Error("public key engine mismatch");
+    if (key.encodingVersion !== this.params.encodingVersion) throw new Error("public key encoding mismatch");
+    if (key.scaleBits !== this.params.scaleBits) throw new Error("public key scale mismatch");
+    if (key.embeddingDimension !== this.params.embeddingDimension) {
+      throw new Error("public key dimension mismatch");
+    }
     const expected = publicKeyFingerprint(key);
     if (expected !== key.fingerprint) throw new Error("public key fingerprint mismatch");
     return {
@@ -173,11 +181,16 @@ export class HomomorphicEngine {
    * One operand must use the `high` layout (enrolled templates) and the other
    * the `low` layout (live captures) so that the dot product collapses into
    * coefficient 0.
+   *
+   * Both operands must be FRESH 2-term ciphertexts: a crafted 3-term blob
+   * would inject an arbitrary s^2 contribution into coefficient 0 (B10).
    */
   evaluateProduct(a: FheCiphertext, b: FheCiphertext): FheCiphertext {
     this.assertPairCompatible(a, b);
     const left = this.unpackCiphertext(a);
     const right = this.unpackCiphertext(b);
+    assertFresh(left, "enrolled template");
+    assertFresh(right, "live capture");
     const product = this.scheme.multiply(left, right);
     return this.packCiphertext(product, Math.min(a.dimension, b.dimension), "product");
   }
@@ -258,5 +271,12 @@ export class HomomorphicEngine {
     // zeros so downstream algebra never has to reason about short arrays.
     const p0 = parsed.polys[0].length === 0 ? this.ring.zero() : parsed.polys[0];
     return { p0, p1: parsed.polys[1], p2: parsed.polys[2] };
+  }
+}
+
+/** A fresh encryption has no s^2 term; products must never be evaluation inputs. */
+function assertFresh(ct: Ciphertext, role: string): void {
+  if (ct.p0.some((v) => v !== 0n)) {
+    throw new Error(`${role} is not a fresh ciphertext: products cannot be evaluation inputs`);
   }
 }

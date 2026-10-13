@@ -62,7 +62,17 @@ export function deserializeShare(file: ShareFile, ring: HomomorphicEngine, keyFi
     throw new Error("share parameters do not match the engine");
   }
   if (file.keyFingerprint !== keyFingerprint) throw new Error("share belongs to a different key version");
-  return { shareIndex: file.shareIndex, sigma: base64ToPoly(file.sigma), tau: base64ToPoly(file.tau) };
+  // B6: a malformed share file must fail here, not corrupt recombination later.
+  const sigma = base64ToPoly(file.sigma);
+  const tau = base64ToPoly(file.tau);
+  const n = ring.params.ringDimension;
+  const q = BigInt(ring.params.modulus);
+  for (const [name, poly] of [["sigma", sigma], ["tau", tau]] as const) {
+    if (poly.length !== n) throw new Error(`share ${name} has the wrong length`);
+    if (poly.some((v) => v < 0n || v >= q)) throw new Error(`share ${name} is out of range`);
+  }
+  if (!Number.isInteger(file.shareIndex) || file.shareIndex < 0) throw new Error("share index is invalid");
+  return { shareIndex: file.shareIndex, sigma, tau };
 }
 
 /** A single committee member's contribution to one decryption. */
@@ -105,17 +115,25 @@ export class DecryptionCommittee {
 
   constructor(members: CommitteeMember[]) {
     if (members.length < 2) throw new Error("a committee needs at least two members");
+    // B5: a duplicated member (or a duplicated share under two names) would
+    // silently produce a garbage plaintext and a wrong decision. Require
+    // distinct identities; distinct share indices are checked in decrypt().
+    const ids = members.map((m) => m.id);
+    if (new Set(ids).size !== ids.length) throw new Error("committee members must be distinct");
     this.members = members;
     this.threshold = members.length;
   }
 
   static fromShares(shares: SecretKeyShare[], ids: string[]): DecryptionCommittee {
     if (shares.length !== ids.length) throw new Error("share/id count mismatch");
+    const indices = shares.map((s) => s.shareIndex);
+    if (new Set(indices).size !== indices.length) throw new Error("committee shares must be distinct");
     return new DecryptionCommittee(shares.map((share, i) => new CommitteeMember(ids[i], share)));
   }
 
   decrypt(engine: HomomorphicEngine, ciphertext: FheCiphertext, errorBound: number): CommitteeResult {
     const partials = this.members.map((m) => m.partialDecrypt(engine, ciphertext));
+    if (partials.length !== this.threshold) throw new Error("committee is incomplete");
     const plaintext = engine.combinePartials(partials, ciphertext);
     const result = engine.similarity(plaintext, errorBound);
     return { ...result, contributors: this.members.map((m) => m.id) };

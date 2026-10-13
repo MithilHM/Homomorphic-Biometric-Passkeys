@@ -371,8 +371,10 @@ class CkksEngine:
         plaintext = self._context.Decrypt(self._key_pair.secretKey, product)
         plaintext.SetLength(self.params.embedding_dimension)
         slots = plaintext.GetRealPackedValue()
-        # Every slot holds its own term; sum them to recover the dot product.
-        return float(sum(slots[: self.params.embedding_dimension]))
+        # After the rotate-and-add reduction every slot holds the full dot
+        # product; slot 0 is the canonical read-out. Summing the first dim
+        # slots would re-add the reduced value dim times over (B1).
+        return float(slots[0])
 
     def compare(
         self,

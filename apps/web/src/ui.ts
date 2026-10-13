@@ -87,11 +87,16 @@ function childrenOf(node: VNode): VChild[] {
  * the camera stream on every state change.
  */
 export function mount(container: HTMLElement, node: VNode): void {
+  // Preserve live media across renders, wherever they are nested: recreating
+  // <video> would drop the camera stream on every state change (U1). Save the
+  // stream bindings by id, then reattach them to the freshly rendered nodes.
+  const streams = new Map<string, MediaProvider | null>();
+  for (const child of Array.from(container.querySelectorAll("video, canvas"))) {
+    if (child.id && child instanceof HTMLVideoElement) streams.set(child.id, child.srcObject);
+  }
   const keep = new Map<string, Element>();
-  for (const child of Array.from(container.children)) {
-    if (child instanceof HTMLVideoElement || child instanceof HTMLCanvasElement) {
-      keep.set(child.id, child);
-    }
+  for (const child of Array.from(container.querySelectorAll("video, canvas"))) {
+    if (child.id) keep.set(child.id, child);
   }
 
   const build = (child: VChild): Node => {
@@ -109,6 +114,17 @@ export function mount(container: HTMLElement, node: VNode): void {
   for (const child of childrenOf(node)) fragment.appendChild(build(child));
 
   container.replaceChildren(fragment);
+  // Reattach saved streams to the new elements with the same ids, so a
+  // mid-capture progress render never starves the pipeline.
+  for (const [id, srcObject] of streams) {
+    const next = container.querySelector(`#${CSS.escape(id)}`);
+    if (next instanceof HTMLVideoElement && srcObject) {
+      if (next.srcObject !== srcObject) {
+        next.srcObject = srcObject;
+        next.play().catch(() => undefined);
+      }
+    }
+  }
   container.setAttribute("aria-busy", "false");
 }
 
