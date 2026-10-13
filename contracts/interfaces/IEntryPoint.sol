@@ -26,26 +26,31 @@ struct PackedUserOperation {
 }
 
 /// @notice Validation data conventions from ERC-4337 v0.7.
+///
+/// Layout (all standard, so a real EntryPoint parses what we return):
+///   [0..160)   aggregator address (zero when no aggregator is used)
+///   [160..208) validUntil (uint48, 0 = no expiry bound from this field)
+///   [208..256) validAfter (uint48, 0 = effective immediately)
 library ValidationData {
     uint256 internal constant VALIDATION_SUCCESS = 0;
-    uint256 internal constant SIG_FAILED = 1;
 
-    uint256 internal constant OFFSET_TIME_RANGE = 0xFFFFFF;
-    uint256 internal constant OFFSET_VALIDATION_FAILED = 1 << 255;
-
-    function pack(address aggregator, uint32 sigFailed, uint64 validUntil) internal pure returns (uint256) {
-        uint256 timeRange = (uint256(validUntil) << (64 + 32)) | uint256(uint32(sigFailed));
-        return uint256(uint160(aggregator)) | timeRange;
+    function pack(address aggregator, uint48 validUntil, uint48 validAfter) internal pure returns (uint256) {
+        return uint256(uint160(aggregator)) | (uint256(validUntil) << 160) | (uint256(validAfter) << 208);
     }
 
-    function unpack(uint256 validationData) internal pure returns (address aggregator, bool failed, uint48 validUntil) {
+    function unpack(uint256 validationData)
+        internal
+        pure
+        returns (address aggregator, bool failed, uint48 validUntil)
+    {
         aggregator = address(uint160(validationData));
-        failed = (validationData & OFFSET_VALIDATION_FAILED) != 0;
-        validUntil = uint48(validationData >> (64 + 32));
+        // This account reverts on failure instead of returning a failure flag.
+        failed = false;
+        validUntil = uint48(validationData >> 160);
     }
 
-    function getSigFailed(uint256 validationData) internal pure returns (bool) {
-        return (validationData >> (64 + 32)) & 0x01 == 1;
+    function getSigFailed(uint256) internal pure returns (bool) {
+        return false;
     }
 
     function getAggregator(address aggregator, uint256 validationData) internal pure returns (address) {

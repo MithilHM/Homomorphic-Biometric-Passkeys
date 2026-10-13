@@ -36,6 +36,8 @@ contract BiometricSmartAccount is IAccount {
     uint8 private constant MAGIC_AUTHORIZATION = 0x48;
     /// @notice Session-key envelope: scoped delegation created after full auth.
     uint8 private constant MAGIC_SESSION = 0x53;
+    /// @notice Similarity is expressed in millionths: 1_000_000 == perfect match.
+    uint32 public constant MAX_SIMILARITY_BPS = 1_000_000;
 
     /* -------------------------------------------------------------------- */
     /*                                Storage                               */
@@ -45,6 +47,9 @@ contract BiometricSmartAccount is IAccount {
     IAuthorizationVerifier public immutable authorizationVerifier;
     ISessionKeyRegistry public immutable sessionKeys;
     IRecoveryRegistry public immutable recovery;
+    /// @notice Factory that deployed this account (zero for directly deployed
+    ///         accounts). It may enroll the FIRST passkey only (H6).
+    address public immutable enrollmentFactory;
 
     bytes32 public policyHash;
     uint32 public policyVersion;
@@ -92,11 +97,13 @@ contract BiometricSmartAccount is IAccount {
     error MalformedEnvelope();
     error AuthorizationRejected();
     error ThresholdBelowPolicy();
+    error ThresholdAboveMaximum();
     error WrongDecisionProgram();
     error WrongTemplateVersion();
     error WrongFheKeyVersion();
     error UnknownPasskey();
     error PasskeyAlreadyRegistered();
+    error NotEnrollmentFactory();
     error SpendLimitExceeded();
     error PrefundFailed();
     error InvalidCallTarget();
@@ -119,6 +126,7 @@ contract BiometricSmartAccount is IAccount {
         authorizationVerifier = verifier_;
         sessionKeys = new SessionKeyRegistry(address(this));
         recovery = new RecoveryRegistry(address(this));
+        enrollmentFactory = msg.sender;
 
         policyHash = policyHash_;
         policyVersion = 1;
@@ -158,18 +166,22 @@ contract BiometricSmartAccount is IAccount {
     {
         if (locked) revert AccountIsLocked();
         if (userOp.sender != address(this)) revert InvalidSender();
-        if (recovery.isRecoveryPending(address(this))) revert RecoveryInProgress();
+        // C3: while a recovery is pending the ONLY callable path is cancelling
+        // it — otherwise cancel would be unreachable and any grief-initiated
+        // recovery would deadlock the account (and its funds) forever.
+        if (recovery.isRecoveryPending(address(this)) && !_isCancelRecovery(userOp.callData)) {
+            revert RecoveryInProgress();
+        }
         if (userOp.signature.length < 3) revert UnknownEnvelope();
 
         uint8 magic = uint8(userOp.signature[0]);
         if (magic == MAGIC_AUTHORIZATION) {
             Authorization memory a = _decodeAuthorization(userOp.signature);
             _checkAuthorization(a, userOpHash);
-            validationData = ValidationData.pack(address(0), 0, uint48(a.expiresAt));
-            authorizationVerifier.consume(a.sessionId);
+            validationData = ValidationData.pack(address(0), uint48(a.expiresAt), 0);
             emit OperationValidated(userOpHash, a.sessionId, false);
         } else if (magic == MAGIC_SESSION) {
-            validationData = _validateSessionKey(userOp.signature);
+            validationData = _validateSessionKey(userOp.signature, userOp);
             emit OperationValidated(userOpHash, bytes16(0), true);
         } else {
             revert UnknownEnvelope();
@@ -181,22 +193,29 @@ contract BiometricSmartAccount is IAccount {
         }
     }
 
-    function _checkAuthorization(Authorization memory a, bytes32 userOpHash) private view {
+    function _checkAuthorization(Authorization memory a, bytes32 userOpHash) private {
         if (a.decisionProgramHash != decisionProgramHash) revert WrongDecisionProgram();
         if (a.templateVersion != templateVersion) revert WrongTemplateVersion();
         if (a.fheKeyVersion != fheKeyVersion) revert WrongFheKeyVersion();
         if (a.thresholdBps < minimumSimilarityBps) revert ThresholdBelowPolicy();
+        if (a.thresholdBps > MAX_SIMILARITY_BPS) revert ThresholdAboveMaximum();
         if (a.policyHash != policyHash) revert AuthorizationRejected();
-        if (!biometricRequired) return;
-        authorizationVerifier.verify(address(this), userOpHash, block.chainid, a);
+        // C2: no passkey-only fallback. The committee attestation (signature,
+        // expiry, binding, decision, replay) is always verified, regardless of
+        // the biometricRequired flag.
+        authorizationVerifier.verifyAndConsume(address(this), userOpHash, block.chainid, a);
     }
 
     /**
      * @notice Session envelope: `0x53 | uint16 len | address key | uint64 until |
      *         bytes4 selector | uint256 value | bytes32 sessionKeyHash`.
+     * @dev The targets/selectors/values are decoded from the UserOperation's
+     *      OWN callData — never from the self-asserted envelope (H3). The
+     *      envelope's selector/value must match a decoded call exactly, so a
+     *      scoped key cannot be waved at an arbitrary execution.
      */
-    function _validateSessionKey(bytes calldata envelope) private returns (uint256) {
-        uint256 bodyLength = (uint16(bytes2(envelope[1])) << 8) | uint16(bytes2(envelope[2]));
+    function _validateSessionKey(bytes calldata envelope, PackedUserOperation calldata userOp) private returns (uint256) {
+        uint256 bodyLength = (uint256(uint8(envelope[1])) << 8) | uint256(uint8(envelope[2]));
         if (envelope.length != bodyLength + 3) revert MalformedEnvelope();
         if (envelope.length != 3 + 20 + 8 + 4 + 32 + 32) revert MalformedEnvelope();
 
@@ -210,8 +229,37 @@ contract BiometricSmartAccount is IAccount {
         if (scopeHash != SessionKeyRegistry(address(sessionKeys)).scopeHashes(sessionKey)) {
             revert AuthorizationRejected();
         }
-        sessionKeys.spend(address(this), sessionKey, msg.sender, selector, value);
-        return ValidationData.pack(address(0), 0, uint48(block.timestamp + 300));
+        _spendSessionCalls(sessionKey, selector, value, userOp.callData);
+        return ValidationData.pack(address(0), uint48(validUntil), 0);
+    }
+
+    /// @dev Decode execute/executeBatch targets from calldata and spend each
+    ///      against the session scope. Anything else cannot be session-authorized.
+    function _spendSessionCalls(address sessionKey, bytes4 selector, uint256 value, bytes calldata callData)
+        private
+    {
+        if (callData.length < 4) revert MalformedEnvelope();
+        bytes4 outer = bytes4(callData[0:4]);
+        SessionKeyRegistry registry = SessionKeyRegistry(address(sessionKeys));
+        if (outer == this.execute.selector) {
+            (address target, uint256 callValue, bytes memory data) =
+                abi.decode(callData[4:], (address, uint256, bytes));
+            bytes4 inner = data.length >= 4 ? bytes4(data) : bytes4(0);
+            if (inner != selector || callValue != value) revert AuthorizationRejected();
+            registry.spend(address(this), sessionKey, target, inner, callValue);
+        } else if (outer == this.executeBatch.selector) {
+            Call[] memory calls = abi.decode(callData[4:], (Call[]));
+            if (calls.length == 0) revert MalformedEnvelope();
+            bool covered;
+            for (uint256 i = 0; i < calls.length; i++) {
+                bytes4 inner = calls[i].data.length >= 4 ? bytes4(calls[i].data) : bytes4(0);
+                registry.spend(address(this), sessionKey, calls[i].target, inner, calls[i].value);
+                if (inner == selector && calls[i].value == value) covered = true;
+            }
+            if (!covered) revert AuthorizationRejected();
+        } else {
+            revert UnknownEnvelope();
+        }
     }
 
     /**
@@ -221,12 +269,12 @@ contract BiometricSmartAccount is IAccount {
      *      assertion | Authorization (fixed-width fields) | bytes signature
      */
     function _decodeAuthorization(bytes calldata envelope) private pure returns (Authorization memory a) {
-        uint256 bodyLength = (uint16(bytes2(envelope[1])) << 8) | uint16(bytes2(envelope[2]));
+        uint256 bodyLength = (uint256(uint8(envelope[1])) << 8) | uint256(uint8(envelope[2]));
         if (envelope.length != bodyLength + 3) revert MalformedEnvelope();
 
         uint256 cursor = 3;
         cursor += 32; // envelopeHash, bound to the account by the verifier path
-        uint256 assertionLength = (uint16(bytes2(envelope[cursor])) << 8) | uint16(bytes2(envelope[cursor + 1]));
+        uint256 assertionLength = (uint256(uint8(envelope[cursor])) << 8) | uint256(uint8(envelope[cursor + 1]));
         cursor += 2;
         if (assertionLength == 0) revert MissingPasskeyAssertion();
         cursor += assertionLength;
@@ -271,8 +319,8 @@ contract BiometricSmartAccount is IAccount {
         external
         payable
         onlyEntryPoint
-        operational
     {
+        _recoveryGate(target, data);
         if (target == address(0)) revert InvalidCallTarget();
         if (value > dailySpendCap) revert SpendLimitExceeded();
         (bool ok, bytes memory ret) = target.call{value: value}(data);
@@ -290,8 +338,9 @@ contract BiometricSmartAccount is IAccount {
         bytes data;
     }
 
-    function executeBatch(Call[] calldata calls) external payable onlyEntryPoint operational {
+    function executeBatch(Call[] calldata calls) external payable onlyEntryPoint {
         for (uint256 i = 0; i < calls.length; i++) {
+            _recoveryGate(calls[i].target, calls[i].data);
             if (calls[i].target == address(0)) revert InvalidCallTarget();
             if (calls[i].value > dailySpendCap) revert SpendLimitExceeded();
             (bool ok, bytes memory ret) = calls[i].target.call{value: calls[i].value}(calls[i].data);
@@ -308,7 +357,13 @@ contract BiometricSmartAccount is IAccount {
     /*                         Credential & template                         */
     /* -------------------------------------------------------------------- */
 
-    function addPasskey(bytes32 publicKeyHash, bytes32 credentialCommitment) external onlyEntryPoint {
+    /// @dev First-key enrollment: the deploying factory may register key #0 so
+    ///      counterfactual accounts are usable without a prior UserOperation.
+    ///      Later keys require a validated UserOperation (onlyEntryPoint).
+    function addPasskey(bytes32 publicKeyHash, bytes32 credentialCommitment) external {
+        if (msg.sender != address(entryPoint)) {
+            if (msg.sender != enrollmentFactory || passkeyList.length != 0) revert NotEnrollmentFactory();
+        }
         if (passkeys[publicKeyHash]) revert PasskeyAlreadyRegistered();
         passkeys[publicKeyHash] = true;
         passkeyList.push(publicKeyHash);
@@ -343,6 +398,7 @@ contract BiometricSmartAccount is IAccount {
     }
 
     function setPolicy(bytes32 newPolicyHash, uint32 newMinimumSimilarityBps) external onlyEntryPoint {
+        if (newMinimumSimilarityBps > MAX_SIMILARITY_BPS) revert ThresholdAboveMaximum();
         policyHash = newPolicyHash;
         minimumSimilarityBps = newMinimumSimilarityBps;
         policyVersion += 1;
@@ -375,8 +431,32 @@ contract BiometricSmartAccount is IAccount {
         emit RecoveryCancelled(requestId);
     }
 
+    /// @dev Completing recovery REGISTERs the new key: finalization without a
+    ///      key write was a no-op lock, not recovery (C3).
     function finalizeRecovery(bytes32 requestId, bytes32 newPasskeyHash) external {
         recovery.finalize(requestId, newPasskeyHash);
+        if (!passkeys[newPasskeyHash]) {
+            passkeys[newPasskeyHash] = true;
+            passkeyList.push(newPasskeyHash);
+            emit PasskeyAdded(newPasskeyHash, bytes32(0));
+        }
+    }
+
+    /// @dev True when this operation only cancels a pending recovery.
+    function _isCancelRecovery(bytes calldata callData) private pure returns (bool) {
+        if (callData.length < 4) return false;
+        return bytes4(callData[0:4]) == this.cancelRecovery.selector;
+    }
+
+    /// @dev Execution gate: locked accounts execute nothing; accounts in
+    ///      recovery execute only the cancellation of that recovery, so the
+    ///      owner can always unlock but an attacker can never spend.
+    function _recoveryGate(address target, bytes calldata data) private view {
+        if (locked) revert AccountIsLocked();
+        if (!recovery.isRecoveryPending(address(this))) return;
+        if (target != address(this) || data.length < 4 || bytes4(data[0:4]) != this.cancelRecovery.selector) {
+            revert RecoveryInProgress();
+        }
     }
 
     function setLocked(bool value, string calldata reason) external onlyEntryPoint {

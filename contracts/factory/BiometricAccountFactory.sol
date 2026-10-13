@@ -91,7 +91,12 @@ contract BiometricAccountFactory {
     }
 
     /// @notice Register the first passkey; only callable by the new account.
+    /// @dev Pass-through to the account's first-key enrollment (H6). Anyone
+    ///      may call it, but it only succeeds while the account holds zero
+    ///      keys, and a front-run key is removable by the owner through a
+    ///      validated UserOperation — so griefing buys nothing permanent.
     function initializePasskey(address account, bytes32 publicKeyHash, bytes32 credentialCommitment) external {
+        if (account.code.length == 0) revert DeploymentFailed();
         BiometricSmartAccount(payable(account)).addPasskey(publicKeyHash, credentialCommitment);
     }
 

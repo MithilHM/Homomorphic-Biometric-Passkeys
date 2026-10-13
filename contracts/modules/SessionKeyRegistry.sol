@@ -37,6 +37,10 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
     mapping(address => SessionKey) public sessionKeys;
     mapping(address => bytes32) public scopeHashes;
     mapping(address => Scope) private scopes;
+    /// @dev Granted entries per key, so a re-grant can clear stale scope
+    ///      instead of only ever widening it (M2).
+    mapping(address => address[]) private grantedTargets;
+    mapping(address => bytes4[]) private grantedSelectors;
 
     event SessionKeyGranted(
         address indexed sessionKey, uint64 validUntil, uint256 maxValuePerTx, uint32 nonceDomain, uint8 targetCount
@@ -52,6 +56,7 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
     error TargetNotAllowed();
     error SelectorNotAllowed();
     error ValueExceedsPerTxLimit();
+    error ExceedsDailyCap();
     error CannotGrantToSelf();
 
     modifier onlyAccount() {
@@ -85,11 +90,25 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
         });
 
         scopes[sessionKey].allowAnyTarget = allowedTargets.length == 0;
+        // Clear stale scope first: without this a re-grant could only widen,
+        // never narrow, a key's authority (M2).
+        address[] storage oldTargets = grantedTargets[sessionKey];
+        for (uint256 i = 0; i < oldTargets.length; i++) {
+            scopes[sessionKey].targets[oldTargets[i]] = false;
+        }
+        delete grantedTargets[sessionKey];
+        bytes4[] storage oldSelectors = grantedSelectors[sessionKey];
+        for (uint256 i = 0; i < oldSelectors.length; i++) {
+            scopes[sessionKey].selectors[oldSelectors[i]] = false;
+        }
+        delete grantedSelectors[sessionKey];
         for (uint256 i = 0; i < allowedTargets.length; i++) {
             scopes[sessionKey].targets[allowedTargets[i]] = true;
+            grantedTargets[sessionKey].push(allowedTargets[i]);
         }
         for (uint256 i = 0; i < allowedSelectors.length; i++) {
             scopes[sessionKey].selectors[allowedSelectors[i]] = true;
+            grantedSelectors[sessionKey].push(allowedSelectors[i]);
         }
         scopeHashes[sessionKey] = scopeHash;
 
@@ -107,6 +126,9 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
     }
 
     function selfRevoke(address sessionKey) external {
+        // Only the key itself (or its account, via revoke) may deactivate it:
+        // an open revocation lets anyone kill anyone else's delegation (M2).
+        if (msg.sender != sessionKey) revert NotAuthorized();
         if (!sessionKeys[sessionKey].active) revert SessionKeyUnknown();
         sessionKeys[sessionKey].active = false;
         emit SessionKeyRevoked(sessionKey, "session key self-revoked");
@@ -144,7 +166,9 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
 
         Scope storage scope = scopes[sessionKey];
         if (!scope.allowAnyTarget && !scope.targets[target]) revert TargetNotAllowed();
-        if (selector != bytes4(0) && !scope.selectors[selector]) revert SelectorNotAllowed();
+        // No zero-selector bypass: every call must name an explicitly granted
+        // selector, otherwise any unscoped function passes accounting (M2).
+        if (!scope.selectors[selector]) revert SelectorNotAllowed();
         if (value > key.maxValuePerTx) revert ValueExceedsPerTxLimit();
 
         uint64 today = uint64(block.timestamp / 1 days);
@@ -154,6 +178,7 @@ contract SessionKeyRegistry is ISessionKeyRegistry {
         }
         key.spentToday += value;
         key.spentTotal += value;
+        if (key.spentToday > key.maxValuePerTx * DAILY_CAP_MULTIPLIER) revert ExceedsDailyCap();
 
         emit SessionKeySpent(sessionKey, target, value, key.spentToday);
         return key.spentToday;

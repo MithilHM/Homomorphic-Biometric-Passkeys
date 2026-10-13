@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { ascii, bytesToBase64Url, concat, hexToBytes, keccak256Hex } from "@homobio/crypto-utils";
+import { ascii, bytesToBase64Url, bytesToHex, concat, hexToBytes, keccak256Hex } from "@homobio/crypto-utils";
 import {
   decisionProgramHash,
   envelopeHashHex,
@@ -185,15 +185,14 @@ describe("spec section 6: the authorization object", () => {
   });
 
   it("produces a 32-byte EIP-191 prefixed digest over the attestation hash", () => {
-    // Section 6.4.
+    // Section 6.4: keccak256(EIP-191 prefix || attestationHashBytes).
     const attestationHash = vectors.expected.authorizationHash;
     const digest = ProofService.ethSignedDigest(attestationHash);
     expect(digest).toHaveLength(32);
-    // The inner digest is keccak256 over the attestation hash's *bytes* — not
-    // over its 64 hex characters.
-    const inner = keccak256Hex(hexToBytes(`0x${attestationHash}`));
-    expect(digest.toString("hex")).toBe(
-      keccak256Hex(concat(ascii("\x19Ethereum Signed Message:\n32"), hexToBytes(`0x${inner}`))),
+    // The digest commits to the attestation hash's *bytes* — not to its 64
+    // hex characters — under the standard 26-byte EIP-191 header.
+    expect(bytesToHex(digest)).toBe(
+      keccak256Hex(concat(ascii("\x19Ethereum Signed Message:\n32"), hexToBytes(`0x${attestationHash}`))),
     );
   });
 

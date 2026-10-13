@@ -107,7 +107,8 @@ contract BiometricSmartAccountTest is Test {
             a.decisionProgramHash
         );
         a.attestationHash = digest;
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(committeePrivateKey, digest);
+        bytes32 prefixed = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(committeePrivateKey, prefixed);
         a.signature = abi.encodePacked(r, s, v);
     }
 
@@ -291,7 +292,8 @@ contract BiometricSmartAccountTest is Test {
         bytes32 userOpHash = keccak256("op");
         Authorization memory a = _authorization(userOpHash);
         (, uint256 attackerKey) = makeAddrAndKey("attacker");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerKey, a.attestationHash);
+        bytes32 prefixed = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", a.attestationHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerKey, prefixed);
         a.signature = abi.encodePacked(r, s, v);
 
         vm.expectRevert(AuthorizationVerifier.SignatureInvalid.selector);
@@ -314,9 +316,14 @@ contract BiometricSmartAccountTest is Test {
         bytes32 userOpHash = keccak256("op");
         Authorization memory a = _authorization(userOpHash);
         bytes memory sig = a.signature;
+        bytes32 r = bytes32(sig[0:32]);
         bytes32 s = bytes32(sig[32:64]);
-        bytes memory malleable = abi.encodePacked(sig[0:32], ~s, sig[64]);
-        a.signature = malleable;
+        uint8 v = uint8(sig[64]);
+        // The true ECDSA mirror: s' = n - s with the other recovery id.
+        bytes32 sPrime =
+            bytes32(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141 - uint256(s));
+        uint8 vPrime = v == 27 ? 28 : 27;
+        a.signature = abi.encodePacked(r, sPrime, vPrime);
 
         vm.expectRevert(AuthorizationVerifier.SignatureInvalid.selector);
         _validate(_pack(a, hex"aabb"), userOpHash);

@@ -20,6 +20,9 @@ import {IRecoveryRegistry} from "../interfaces/IAuthorizationVerifier.sol";
 contract RecoveryRegistry is IRecoveryRegistry {
     /// @notice Recovery is never instant; the floor is 48 hours (PRD section 23).
     uint64 public constant MINIMUM_DELAY = 48 hours;
+    /// @notice ...nor eternal: an unbounded delay would brick the account and
+    ///         its funds forever on a single griefing transaction (C3).
+    uint64 public constant MAXIMUM_DELAY = 30 days;
 
     struct Request {
         bytes32 newPasskeyHash;
@@ -41,6 +44,7 @@ contract RecoveryRegistry is IRecoveryRegistry {
 
     error NotAccount();
     error DelayTooShort();
+    error DelayTooLong();
     error UnknownRequest();
     error RecoveryAlreadyPending();
     error RecoveryNotPending();
@@ -59,6 +63,7 @@ contract RecoveryRegistry is IRecoveryRegistry {
      */
     function initiate(bytes32 newPasskeyHash, uint64 delay) external returns (bytes32 requestId) {
         if (delay < MINIMUM_DELAY) revert DelayTooShort();
+        if (delay > MAXIMUM_DELAY) revert DelayTooLong();
         if (pendingRequestId != bytes32(0)) revert RecoveryAlreadyPending();
 
         requestId = keccak256(abi.encodePacked(account, newPasskeyHash, block.timestamp, msg.sender));

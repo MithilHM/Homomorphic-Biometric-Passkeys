@@ -23,10 +23,10 @@ interface IAuthorizationVerifier {
 
     function consumed(bytes16 sessionId) external view returns (bool);
 
-    /// @notice One-time consumption; separate from `verify` so validation can
-    ///         check cheaply and only a successful execution marks it used.
-    function consume(bytes16 sessionId) external;
-
+    /// @notice Atomic check-and-burn: the ONLY consumption path. A standalone
+    ///         `consume(sessionId)` existed here and was removed: with no
+    ///         binding to account/operation it let anyone front-run and brick
+    ///         someone else's authorization (H1). Simulation uses `verify`.
     function verifyAndConsume(
         address account,
         bytes32 userOpHash,

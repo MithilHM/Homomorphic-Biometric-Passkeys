@@ -25,7 +25,7 @@ import {AuthDomain} from "../protocol/AuthDomain.sol";
 contract AuthorizationVerifier is IAuthorizationVerifier {
     /// @notice ERC-191 personal-message prefix, so a signature can never be
     ///         replayed as a transaction on another chain.
-    bytes32 private constant SIGNATURE_PREFIX = "\x19Ethereum Signed Message:\n32";
+    bytes private constant SIGNATURE_PREFIX = "\x19Ethereum Signed Message:\n32";
 
     address public governance;
     IProofVerifierRegistry public immutable registry;
@@ -95,13 +95,6 @@ contract AuthorizationVerifier is IAuthorizationVerifier {
         if (consumed[authorization.sessionId]) revert AlreadyConsumed();
         _check(account, userOpHash, chainId, authorization);
         return true;
-    }
-
-    /// @inheritdoc IAuthorizationVerifier
-    function consume(bytes16 sessionId) external {
-        if (consumed[sessionId]) revert AlreadyConsumed();
-        consumed[sessionId] = true;
-        emit AuthorizationConsumed(sessionId, msg.sender, bytes32(0), true);
     }
 
     /// @inheritdoc IAuthorizationVerifier

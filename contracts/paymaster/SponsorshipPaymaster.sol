@@ -44,6 +44,7 @@ contract SponsorshipPaymaster {
     error ValueTransferForbidden();
     error InvalidTimeRange();
     error InsufficientDeposit();
+    error MalformedPaymasterData();
 
     modifier onlyEntryPoint() {
         if (msg.sender != entryPoint) revert NotEntryPoint();
@@ -110,45 +111,73 @@ contract SponsorshipPaymaster {
         if (sponsoredOps[userOp.sender] >= MAX_SPONSORED_OPS) revert SponsorLimitReached();
         if (userOp.callData.length > 0 && _transfersValue(userOp.callData)) revert ValueTransferForbidden();
 
+        if (paymasterAndData.length < 68) revert MalformedPaymasterData();
         uint256 gasCost = uint256(bytes32(paymasterAndData[36:68]));
 
         uint256 required = gasCost * (baseFee + perOpOverhead);
         if (required > maxCost) revert InsufficientDeposit();
         if (sponsorDeposit < required) revert InsufficientDeposit();
 
-        validationData = ValidationData.pack(address(0), 0, uint48(uint256(timeRange) + timeRangeOffset));
-        return ("", validationData);
+        uint256 expiry = uint256(timeRange) + timeRangeOffset;
+        if (expiry > type(uint48).max) revert InvalidTimeRange();
+        validationData = ValidationData.pack(address(0), uint48(expiry), 0);
+        // v0.7 postOp receives no UserOperation: attribute via context.
+        return (abi.encode(userOp.sender), validationData);
     }
 
-    function postOp(
-        PackedUserOperation calldata userOp,
-        bytes calldata,
-        uint256 actualGasCost,
-        uint256 actualUserOpFeePerGas
-    ) external onlyEntryPoint {
-        sponsoredOps[userOp.sender] += 1;
-        sponsoredGasCost[userOp.sender] += actualGasCost;
+    /// @dev EntryPoint v0.7 postOp signature: (PostOpMode, context, actualGasCost, actualGasCostFee).
+    function postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 actualUserOpFeePerGas)
+        external
+        onlyEntryPoint
+    {
+        // Counted here, not in validation: validatePaymasterUserOp is a view
+        // and cannot write, so the per-account cap enforces across bundles,
+        // not within one bundle (residual: N validations in one bundle each
+        // see the pre-bundle count).
+        mode;
+        address sender = context.length >= 32 ? abi.decode(context, (address)) : address(0);
+        if (sender == address(0)) revert AccountNotEligible();
+        sponsoredOps[sender] += 1;
+        sponsoredGasCost[sender] += actualGasCost;
         uint256 toRefund = actualUserOpFeePerGas * actualGasCost;
         if (toRefund > sponsorDeposit) toRefund = sponsorDeposit;
         sponsorDeposit -= uint128(toRefund);
 
         IEntryPoint(entryPoint).depositTo{value: toRefund}(address(this));
-        emit OpsSponsored(userOp.sender, bytes32(sponsoredOps[userOp.sender]), toRefund);
+        emit OpsSponsored(sender, bytes32(sponsoredOps[sender]), toRefund);
     }
 
-    /// @dev `execute(address,uint256,bytes)` with a non-zero value.
+    /// @dev True when the operation moves value: any execute with value > 0,
+    ///      or any executeBatch call with value > 0 (H7: the old check blocked
+    ///      a nonexistent selector and let batch value through).
     function _transfersValue(bytes calldata callData) private pure returns (bool) {
         if (callData.length < 4) return false;
         bytes4 selector = bytes4(callData[0:4]);
-        return selector == IAccount0.executeWithValue.selector || selector == bytes4(0xb61d27f6);
+        if (selector == bytes4(0xb61d27f6)) {
+            (, uint256 value,) = abi.decode(callData[4:], (address, uint256, bytes));
+            return value > MAX_SPONSORED_VALUE;
+        }
+        if (selector == bytes4(keccak256("executeBatch((address,uint256,bytes)[])"))) {
+            Call[] memory calls = abi.decode(callData[4:], (Call[]));
+            for (uint256 i = 0; i < calls.length; i++) {
+                if (calls[i].value > MAX_SPONSORED_VALUE) return true;
+            }
+            return false;
+        }
+        // Unknown entrypoint into the account: refuse sponsorship.
+        return true;
     }
 }
 
-interface IAccount0 {
-    function execute(address target, uint256 value, bytes calldata data) external payable;
+enum PostOpMode {
+    opSucceeded,
+    opReverted,
+    postOpReverted
+}
 
-    function executeWithValue(address target, uint256 value, bytes calldata data, bytes calldata unused)
-        external
-        payable;
+struct Call {
+    address target;
+    uint256 value;
+    bytes data;
 }
 
