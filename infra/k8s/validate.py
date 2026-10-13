@@ -132,14 +132,56 @@ def check_no_public_coprocessor(docs: list[dict]) -> None:
             fail(f"Service/fhe-coprocessor: type is {stype}; it must be ClusterIP")
 
 
+def check_singleton_gateway(docs: list[dict]) -> None:
+    """The challenge/session store is in-process: a second gateway replica
+    believes consumed challenges are unspent (replay protection diverges), and
+    a minAvailable: 1 PDB on one replica only hangs node drains. So the
+    gateway must stay exactly one replica with no HPA and no PDB."""
+    for doc in docs:
+        if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "gateway":
+            if doc["spec"].get("replicas", 1) != 1:
+                fail("Deployment/gateway: replicas must be 1 until the store is externalised")
+        if doc.get("kind") == "HorizontalPodAutoscaler":
+            target = (doc.get("spec", {}).get("scaleTargetRef", {}) or {}).get("name", "")
+            if target == "gateway":
+                fail("HorizontalPodAutoscaler scales the singleton gateway; remove it")
+        if doc.get("kind") == "PodDisruptionBudget":
+            selector = (doc.get("spec", {}).get("selector", {}) or {}).get("matchLabels", {})
+            if selector.get("app.kubernetes.io/name") == "gateway":
+                fail("PodDisruptionBudget selects the singleton gateway; remove it")
+
+
+def check_overlay() -> None:
+    """The production overlay must contribute exactly the TLS ingress (and no
+    HPA/PDB resurrected beside it). Extra YAML documents appended to a
+    kustomization.yaml are silently ignored by kustomize, so the ingress must
+    live in its own file listed under `resources`."""
+    with open("infra/k8s/overlays/production/kustomization.yaml", encoding="utf-8") as handle:
+        overlay = yaml.safe_load(handle)
+    resources = overlay.get("resources", [])
+    if "../../base" not in resources:
+        fail("overlay kustomization does not include ../../base")
+    if "ingress.yaml" not in resources:
+        fail("overlay kustomization does not include ingress.yaml")
+    with open("infra/k8s/overlays/production/ingress.yaml", encoding="utf-8") as handle:
+        ingress = yaml.safe_load(handle)
+    if ingress.get("kind") != "Ingress":
+        fail("overlay ingress.yaml is not an Ingress")
+    tls_hosts = [h for t in (ingress.get("spec", {}).get("tls", {}) or []) for h in (t.get("hosts", []) or [])]
+    if not tls_hosts:
+        fail("overlay Ingress has no TLS hosts; WebAuthn requires a secure context")
+
+
 def main() -> int:
-    docs = load("infra/k8s/base.yaml")
-    print(f"loaded {len(docs)} documents from infra/k8s/base.yaml")
+    docs = load("infra/k8s/base/base.yaml")
+    print(f"loaded {len(docs)} documents from infra/k8s/base/base.yaml")
 
     check_network_policies(docs)
     check_workloads(docs)
     check_service_selectors(docs)
     check_no_public_coprocessor(docs)
+    check_singleton_gateway(docs)
+    check_overlay()
 
     if FAILURES:
         print(f"\n{len(FAILURES)} violation(s):")

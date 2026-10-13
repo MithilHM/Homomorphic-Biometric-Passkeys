@@ -2,16 +2,18 @@
 #
 #   kubectl apply -k infra/k8s/overlays/production
 #
-# Adds an ingress, resource reservations and a disruption budget on top of the
-# base manifests. Secrets are NOT overridden here — supply them with an external
-# secrets manager rather than committing them to a ConfigMap.
+# Adds pinned images, production resource reservations and the TLS ingress on
+# top of the base manifests (see ingress.yaml). Secrets are NOT overridden
+# here — supply them with an external secrets manager rather than committing
+# them to a ConfigMap.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: homobio
 
 resources:
-  - ../../base.yaml
+  - ../../base
+  - ingress.yaml
 
 patches:
   # Production images are pinned, not floating tags.
@@ -43,31 +45,3 @@ patches:
           limits:
             cpu: "8"
             memory: 8Gi
-
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: gateway
-  namespace: homobio
-  annotations:
-    # WebAuthn requires a secure context, so TLS is not optional here.
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - app.example.com
-      secretName: homobio-tls
-  rules:
-    - host: app.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gateway
-                port:
-                  number: 5000

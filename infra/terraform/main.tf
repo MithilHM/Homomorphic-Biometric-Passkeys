@@ -29,7 +29,7 @@ terraform {
 
 provider "kubernetes" {
   host                   = var.k8s_endpoint
-  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
+  cluster_ca_certificate = base64decode(var.k8s_ca_certificate)
   token                  = var.k8s_token
 }
 
@@ -133,15 +133,16 @@ locals {
     FHE_ERROR_BOUND = "0.001953125"
     # Never regenerate the key set on restart, or every enrolled template
     # becomes undecryptable.
-    FHE_REUSE_KEYS   = "true"
+    FHE_REUSE_KEYS = "true"
+    # In-cluster coprocessor address. The code default is 127.0.0.1:5001, which
+    # is wrong inside a pod: without this the gateway calls itself (broken).
+    FHE_SERVICE_URL = "http://fhe-coprocessor:5001"
     RELAYER_DRY_RUN  = var.bundler_url == "" ? "true" : "false"
     BUNDLER_URL      = var.bundler_url
     WEBAUTHN_RP_ID   = var.domain
     WEBAUTHN_ORIGIN  = "https://${var.domain}"
     ALLOWED_ORIGINS  = "https://${var.domain}"
   }
-
-  bundler_url = ""
 }
 
 variable "bundler_url" {

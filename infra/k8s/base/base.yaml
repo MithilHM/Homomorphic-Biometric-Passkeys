@@ -361,36 +361,12 @@ spec:
         - name: tmp
           emptyDir: {}
 ---
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: gateway
-  namespace: homobio
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: gateway
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: gateway
-  namespace: homobio
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: gateway
-  minReplicas: 1
-  maxReplicas: 3
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
+# NOTE: no HorizontalPodAutoscaler and no PodDisruptionBudget for the gateway,
+# deliberately. The challenge/session store is in-process (see the Deployment
+# comment): a second replica would believe consumed challenges are unspent, so
+# autoscaling past 1 is a replay-protection bug, not availability. And with one
+# replica a minAvailable: 1 PDB only hangs node drains. Re-add both when the
+# store is externalised.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

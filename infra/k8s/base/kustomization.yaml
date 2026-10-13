@@ -1,0 +1,7 @@
+# Base kustomization: lets the production overlay (and kubectl -k) consume
+# base.yaml as a proper kustomize base instead of a bare file reference.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base.yaml
