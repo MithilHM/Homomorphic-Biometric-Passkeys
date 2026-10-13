@@ -43,19 +43,32 @@ export interface ChainConfig {
  * is why the API gateway refuses to start without an explicit value in
  * production mode.
  */
+/**
+ * Read an environment variable without assuming a Node runtime.
+ *
+ * This package is bundled into the browser client (`apps/web`), where
+ * `process` does not exist. A bare `process.env.X` reference throws at module
+ * evaluation time and bricks the entire app before it renders — so every
+ * access goes through this guard. Node behaviour is unchanged.
+ */
+export function readEnv(name: string): string | undefined {
+  const holder = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
+  return holder.process?.env?.[name];
+}
+
 export const MONAD_TESTNET: ChainConfig = {
   chainId: 143,
   name: "Monad Testnet",
-  rpcUrl: process.env.MONAD_TESTNET_RPC ?? "https://testnet-rpc.monad.xyz",
-  entryPoint: process.env.MONAD_ENTRY_POINT ?? "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+  rpcUrl: readEnv("MONAD_TESTNET_RPC") ?? "https://testnet-rpc.monad.xyz",
+  entryPoint: readEnv("MONAD_ENTRY_POINT") ?? "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
   nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
 };
 
 export const MONAD_MAINNET: ChainConfig = {
   chainId: 1,
   name: "Monad",
-  rpcUrl: process.env.MONAD_RPC ?? "https://rpc.monad.xyz",
-  entryPoint: process.env.MONAD_ENTRY_POINT ?? "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+  rpcUrl: readEnv("MONAD_RPC") ?? "https://rpc.monad.xyz",
+  entryPoint: readEnv("MONAD_ENTRY_POINT") ?? "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
   nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
 };
 

@@ -20,6 +20,9 @@ const MIME: Record<string, string> = {
   ".map": "application/json; charset=utf-8",
 };
 
+/** Extensions the generic `/:file` route is allowed to serve. */
+const STATIC_EXTENSIONS = new Set(Object.keys(MIME));
+
 export async function ensureWebBundle(logger: Logger): Promise<boolean> {
   const outDir = path.resolve(process.cwd(), "apps/web/dist");
   const entry = path.join(outDir, "index.html");
@@ -83,11 +86,32 @@ export function serveStatic(app: HttpApp, root: string, logger: Logger): void {
     sendFile(ctx.response, file);
   }, { raw: true });
 
-  app.get("/app.js", (ctx) => {
-    const file = path.join(root, "app.js");
-    if (!existsSync(file)) {
+  /**
+   * Every other file the client references (`app.js`, `app.css`, `app.js.map`,
+   * icons) lives directly under the bundle root. This single-segment route
+   * serves exactly those — and nothing else:
+   *
+   *   -basename only: the router splits on `/`, so `:file` can never contain
+   *    a separator, and `..` / drive prefixes are rejected explicitly;
+   *   - allowlisted extensions, so this can never serve key material or state
+   *    even if the root were misconfigured;
+   *   - resolved back under `root`, so a symlinked dist cannot escape it;
+   *   - single-segment only, so no `/v1/*` API route can be shadowed (the API
+   *    routes are registered first in any case).
+   */
+  app.get("/:file", (ctx) => {
+    const name = ctx.params.file;
+    const ext = path.extname(name);
+    if (!STATIC_EXTENSIONS.has(ext) || name.includes("..") || path.basename(name) !== name) {
       ctx.response.writeHead(404, { "content-type": "text/plain" });
-      ctx.response.end("bundle not built");
+      ctx.response.end("not found");
+      return;
+    }
+    const resolvedRoot = path.resolve(root);
+    const file = path.resolve(resolvedRoot, name);
+    if (!file.startsWith(resolvedRoot + path.sep) || !existsSync(file) || !statSync(file).isFile()) {
+      ctx.response.writeHead(404, { "content-type": "text/plain" });
+      ctx.response.end("not found");
       return;
     }
     sendFile(ctx.response, file);
