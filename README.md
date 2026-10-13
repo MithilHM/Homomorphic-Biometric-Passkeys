@@ -50,9 +50,11 @@ overclaims:
 
 ## Quickstart
 
-Requires Node ≥ 20.11. There are **no runtime dependencies** — the FHE scheme,
-keccak-256, CBOR, COSE, WebAuthn verification and the ABI encoder are all in
-this repo.
+Requires Node ≥ 20.11. Runtime dependencies are `@noble/curves` +
+`@noble/hashes` (secp256k1 attestation signing, audited narrow-scope crypto)
+— everything else (FHE scheme, keccak-256, CBOR, COSE, WebAuthn verification,
+ABI encoder) is in this repo. The shipped **web client** (`apps/web`) has zero
+third-party runtime deps.
 
 ```bash
 npm install

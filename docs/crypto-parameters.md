@@ -32,7 +32,7 @@ R = Z_q[X] / (X^N + 1)
 | Engine id | `rlwe-negacyclic-d1` | Depth-1 RLWE with ciphertext×ciphertext multiplication. |
 | Ring dimension `N` | 1024 | Doubling the ring dimension halves the ciphertext-free noise-to-signal ratio's growth while doubling payload size. Measured below. |
 | Modulus `q` | 1152921504606877697 (61-bit prime) | The smallest 61-bit prime with `q ≡ 1 (mod 2N)`, which the NTT embedding requires. |
-| Security | ≥128-bit RLWE | `N = 1024` with a 61-bit modulus is well above the Kyber-512 reference point (n = 256, q = 3329). |
+| Security | experimental RLWE parameter set, NOT a 128-bit claim | A 61-bit `q` at `N = 1024` does not meet the Homomorphic Encryption Standard for 128-bit security (which needs `N ≈ 16384` at this modulus size); larger `q` *reduces* RLWE hardness at fixed `N`, so the old "well above Kyber-512" comparison was inverted and is withdrawn. The `securityLevelBits: 128` label in code is a placeholder pending a parameter review before production. |
 | Fixed-point scale | `2^18` | Worst-case plaintext `n · 2^36 = 2^43 ≪ q/2`. |
 | Embedding dimension | 128 | `2n − 2 < N`, and the mirrored layout needs `n < N`. |
 | Ciphertext size | 16 392 B (2-term), 24 584 B (product) | Measured, not estimated. |

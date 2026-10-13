@@ -467,13 +467,18 @@ so a substituted comparison cannot be presented as the real one.
 
 ### 6.4 Signature
 
+Standard EIP-191 personal-message signing over the 32-byte attestation hash:
+
 ```
 prefixed  = keccak("\x19Ethereum Signed Message:\n32" ‖ authorizationHash)
-signature = secp256k1-sign-sha256(prefixed)   // raw r‖s‖v, 65 bytes
+signature = secp256k1-sign(prefixed)   // 65 bytes, raw r‖s‖v with v ∈ {27, 28}
 ```
 
-Node signs `sha256(prefixed)`; the contract recovers over `keccak256(prefix ‖
-digest)`. The EIP-191 prefix means the attestation can never be replayed as a
+Both sides sign and verify the SAME digest: the service signs `prefixed`
+directly (no extra hash layer) and the contract recovers over
+`keccak256(prefix ‖ digest)`. A double-hashed variant (`sha256` outside the
+keccak) existed here before and could never verify on-chain; it is removed.
+The EIP-191 prefix means the attestation can never be replayed as a
 raw transaction on another chain. The verifier rejects malleable (high-s)
 signatures, so one digest admits exactly one signature.
 
