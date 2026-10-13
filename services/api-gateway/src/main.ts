@@ -53,7 +53,7 @@ const config: GatewayConfig = {
   rpId: RP_ID,
   rpName: process.env.WEBAUTHN_RP_NAME ?? "Homomorphic Biometric Passkeys",
   origin: ORIGIN,
-  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? ORIGIN).split(",").map((s) => s.trim()),
+  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? ORIGIN).split(",").map((s) => s.trim()).filter(Boolean),
   defaultPolicyId: process.env.DEFAULT_POLICY_ID ?? "policy-standard-v1",
   fheServiceUrl: FHE_URL,
   fheServiceToken: FHE_TOKEN,

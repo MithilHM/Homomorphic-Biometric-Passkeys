@@ -242,7 +242,11 @@ export class HttpApp {
     response.setHeader("cache-control", "no-store");
 
     try {
-      this.checkOrigin(request, url);
+      this.applyCors(request, response);
+      if ((request.method ?? "GET").toUpperCase() === "OPTIONS") {
+        this.handlePreflight(request, response);
+        return;
+      }
       if (this.options.serviceAuthToken) this.checkServiceAuth(request);
 
       const globalLimit = this.options.globalRateLimit;
@@ -310,15 +314,49 @@ export class HttpApp {
     return limiter;
   }
 
-  private checkOrigin(request: IncomingMessage, url: URL): void {
+  /**
+   * Browser origin boundary (NOT an auth control).
+   *
+   * Validates the `Origin` header against the allowlist and, when it matches,
+   * emits `Access-Control-Allow-Origin` + `Vary: Origin` so the browser lets
+   * the page read the response. Requests without an `Origin` header
+   * (curl, bundlers, server-to-server) skip CORS entirely. A disallowed
+   * origin gets a 403 with NO ACAO header, so the browser keeps blocking it.
+   * The `"*"` entry (used by static-asset tests) emits `*` and skips the
+   * allowlist check.
+   */
+  private applyCors(request: IncomingMessage, response: ServerResponse): void {
     const allowed = this.options.allowedOrigins;
-    if (allowed.includes("*")) return;
+    if (allowed.includes("*")) {
+      response.setHeader("access-control-allow-origin", "*");
+      return;
+    }
     const origin = request.headers.origin;
     if (origin === undefined) return; // non-browser client (bundler, CLI)
     if (!allowed.includes(origin)) {
       throw new HttpError(403, "origin_not_allowed", `Origin ${origin} is not allowed`);
     }
-    void url;
+    response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("vary", "Origin");
+  }
+
+  /**
+   * Answer a CORS preflight without touching the router: there is no
+   * `OPTIONS /v1/...` route and there must not need to be. `applyCors` runs
+   * first, so a disallowed origin never reaches this 204.
+   */
+  private handlePreflight(request: IncomingMessage, response: ServerResponse): void {
+    const requestedHeaders = request.headers["access-control-request-headers"];
+    response.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+    response.setHeader(
+      "access-control-allow-headers",
+      typeof requestedHeaders === "string" && requestedHeaders.length > 0
+        ? requestedHeaders
+        : "content-type, authorization, x-request-id",
+    );
+    response.setHeader("access-control-max-age", "600");
+    response.writeHead(204);
+    response.end();
   }
 
   private checkServiceAuth(request: IncomingMessage): void {
