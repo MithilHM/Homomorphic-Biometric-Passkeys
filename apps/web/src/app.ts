@@ -99,12 +99,42 @@ export class App {
   }
 
   async refresh(): Promise<void> {
-    if (!this.state.wallet) return;
+    const wallet = this.state.wallet.trim();
+    if (!wallet) return;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+      this.set({
+        account: null,
+        notice: { kind: "error", text: "That doesn't look like an Ethereum address (0x followed by 40 hex characters)." },
+      });
+      return;
+    }
     try {
-      const response = await fetch(`/v1/wallet/${this.state.wallet}`);
-      this.set({ account: response.ok ? await response.json() : null });
+      const response = await fetch(`/v1/wallet/${wallet}`);
+      if (response.ok) {
+        this.set({ account: await response.json() });
+        this.rememberWallet();
+        return;
+      }
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (response.status === 404 || body?.error === "account_not_found") {
+        this.set({
+          account: null,
+          notice: {
+            kind: "warn",
+            text: "No account exists for this address yet. Create a passkey above to register it — the wallet is created on first registration, not by pasting an address.",
+          },
+        });
+      } else {
+        this.set({
+          account: null,
+          notice: { kind: "error", text: `Could not load the wallet (${body?.error ?? response.status}).` },
+        });
+      }
     } catch {
-      this.set({ account: null });
+      this.set({
+        account: null,
+        notice: { kind: "error", text: "Could not reach the gateway. Is the local stack still running?" },
+      });
     }
   }
 
@@ -329,6 +359,11 @@ export class App {
                   spellcheck: false,
                   onInput: (value: string) => {
                     this.state.wallet = value.trim();
+                    // No full re-render here: rebuilding the DOM mid-typing
+                    // would drop input focus. Toggle the submit button directly;
+                    // the next render derives the same state from scratch.
+                    const btn = document.getElementById("use-existing");
+                    if (btn instanceof HTMLButtonElement) btn.disabled = this.state.wallet.length === 0;
                   },
                 },
               ],
@@ -346,6 +381,7 @@ export class App {
                 },
                 {
                   tag: "button",
+                  id: "use-existing",
                   className: "ghost",
                   text: "Use an existing address",
                   disabled: this.state.busy || this.state.wallet.length === 0,
@@ -936,6 +972,17 @@ export class App {
             };
           }),
         },
+        this.state.livenessInstruction
+          ? {
+              tag: "div",
+              className: "alert info liveness-banner",
+              role: "status",
+              children: [
+                { tag: "strong", children: "Do this now" },
+                { tag: "span", children: this.state.livenessInstruction },
+              ],
+            }
+          : null,
         this.state.notice
           ? {
               tag: "div",
