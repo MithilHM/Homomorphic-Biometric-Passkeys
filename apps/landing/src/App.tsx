@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Nav, Hero, Stats, HowItWorks, Honesty, Tiers, Docs, Faq, Footer } from "./components/Sections";
+import { Nav, Hero, Stats, HowItWorks, OnboardingPreview, Honesty, Tiers, Docs, Faq, Footer } from "./components/Sections";
 import { SectionHeading, Reveal } from "./components/ui";
 
 // Below-fold section split out of the initial chunk.
@@ -27,6 +27,7 @@ export default function App() {
         <Hero />
         <Stats />
         <HowItWorks />
+        <OnboardingPreview />
         <Honesty />
         <div className="border-y border-border/60 bg-abyss/60">
           <section id="stack" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">

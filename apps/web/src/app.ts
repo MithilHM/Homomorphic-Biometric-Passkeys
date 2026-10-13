@@ -13,7 +13,7 @@ import {
   type FailureExplanation,
   type PipelineStage,
 } from "@homobio/biometric-client";
-import { isWebAuthnSupported } from "@homobio/webauthn";
+import { getPlatformAuthInfo, isWebAuthnSupported } from "@homobio/webauthn";
 import { MeraSessionManager, type MeraKeyRole, type MeraSessionKey, MERA_KEY_PRESETS } from "@homobio/sdk";
 import { PrivyPasskeyProvider } from "@homobio/privy-adapter";
 import { announce, mount, type VNode } from "./ui.js";
@@ -33,10 +33,12 @@ interface AppState {
   livenessInstruction?: string;
   progress?: number;
   busy: boolean;
+  platformAuth?: { webauthn: boolean; platformUv: boolean; conditionalMediation: boolean };
   authProvider: "privy" | "native";
   privyAppId: string;
   selectedMeraRole: MeraKeyRole;
   lastMeraTx?: { keyTitle: string; hash: string; gasSaved: string; durationMs: number; viaSessionKey: boolean };
+  pipelineOpen: boolean;
 }
 
 const STAGES: Array<{ stage: PipelineStage; label: string }> = [
@@ -66,6 +68,7 @@ export class App {
     authProvider: "privy",
     privyAppId: "",
     selectedMeraRole: "trading",
+    pipelineOpen: false,
   };
 
   readonly camera = new CameraController();
@@ -146,12 +149,18 @@ export class App {
       children: [
         this.masthead(),
         this.tabs(),
-        this.state.tab === "onboard" ? this.onboardView() : null,
-        this.state.tab === "authenticate" ? this.authenticateView() : null,
-        this.state.tab === "wallet" ? this.walletView() : null,
-        this.state.tab === "mera" ? this.meraView() : null,
-        this.state.tab === "diagnostics" ? this.diagnosticsView() : null,
-        this.pipelineView(),
+        {
+          tag: "main",
+          id: "main",
+          children: [
+            this.state.tab === "onboard" ? this.onboardView() : null,
+            this.state.tab === "authenticate" ? this.authenticateView() : null,
+            this.state.tab === "wallet" ? this.walletView() : null,
+            this.state.tab === "mera" ? this.meraView() : null,
+            this.state.tab === "diagnostics" ? this.diagnosticsView() : null,
+            this.pipelineView(),
+          ],
+        },
         this.footer(),
       ],
     };
@@ -165,7 +174,7 @@ export class App {
 
     return {
       tag: "header",
-      className: "masthead",
+      className: "masthead beam-frame",
       children: [
         {
           tag: "div",
@@ -180,7 +189,7 @@ export class App {
                   tag: "h1",
                   children: [
                     "Your face unlocks your wallet. ",
-                    { tag: "span", className: "hook", text: "Nobody sees your face." },
+                    { tag: "span", className: "hook shiny", text: "Nobody sees your face." },
                   ],
                 },
                 {
@@ -238,15 +247,37 @@ export class App {
       ["mera", "4", "Mera (Many Keys)"],
       ["diagnostics", "✦", "Diagnostics"],
     ];
+    const order = tabs.map(([id]) => id);
+    const onKey = (id: AppState["tab"]) => (event: KeyboardEvent) => {
+      const idx = order.indexOf(id);
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft" && event.key !== "Home" && event.key !== "End") return;
+      event.preventDefault();
+      let next = idx;
+      if (event.key === "ArrowRight") next = (idx + 1) % order.length;
+      if (event.key === "ArrowLeft") next = (idx - 1 + order.length) % order.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = order.length - 1;
+      const nextId = order[next]!;
+      this.set({ tab: nextId, failure: undefined });
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>(`[data-tab="${nextId}"]`)?.focus();
+      }, 0);
+    };
     return {
       tag: "div",
       className: "tabs",
       role: "tablist",
+      ariaLabel: "Wallet sections",
       children: tabs.map(([id, step, label]) => ({
         tag: "button",
         role: "tab",
+        id: `tab-${id}`,
+        dataset: { tab: id },
         ariaSelected: this.state.tab === id ? "true" : "false",
+        ariaControls: `panel-${id}`,
+        tabIndex: this.state.tab === id ? "0" : "-1",
         onClick: () => this.set({ tab: id, failure: undefined }),
+        onKeydown: onKey(id),
         children: [
           { tag: "span", className: "step-num", text: step },
           { tag: "span", text: label },
@@ -302,7 +333,7 @@ export class App {
   private consentCard(): VNode {
     return {
       tag: "section",
-      className: "card",
+      className: "card consent-hero beam-card",
       children: [
         ...this.cardHead(ICONS.eyeOff, "Privacy", "What happens to your face"),
         {
@@ -321,7 +352,41 @@ export class App {
             { tag: "li", children: "A decision needs your face, your passkey and the exact transaction, all together." },
           ],
         },
+        {
+          tag: "div",
+          className: "trust-row",
+          children: [
+            { tag: "span", className: "badge ok", children: [{ tag: "span", className: "dot" }, "frames never leave"] },
+            { tag: "span", className: "badge", text: "CKKS · N=8192" },
+            { tag: "span", className: "badge", text: "ERC-4337" },
+          ],
+        },
       ],
+    };
+  }
+
+  /** Onboarding stepper: passkey → face → spend. Derived from live account state. */
+  private onboardSteps(): VNode {
+    const devices = this.state.account?.devices ?? [];
+    const enrolled = Boolean(this.state.account?.biometric?.enrolled);
+    const passkeyDone = devices.length > 0;
+    const steps = [
+      { n: "1", label: "Passkey", done: passkeyDone, active: !passkeyDone },
+      { n: "2", label: "Face", done: enrolled, active: passkeyDone && !enrolled },
+      { n: "3", label: "Spend", done: Boolean(this.state.session), active: enrolled && !this.state.session },
+    ];
+    return {
+      tag: "ol",
+      className: "onboard-steps",
+      ariaLabel: "Onboarding progress",
+      children: steps.map((s) => ({
+        tag: "li",
+        dataset: { state: s.done ? "done" : s.active ? "active" : "pending" },
+        children: [
+          { tag: "span", className: "step-dot", children: s.done ? "✓" : s.n },
+          { tag: "span", className: "step-label", text: s.label },
+        ],
+      })),
     };
   }
 
@@ -332,152 +397,189 @@ export class App {
 
     return {
       tag: "div",
-      className: "grid",
+      className: "onboard",
+      id: "panel-onboard",
+      role: "tabpanel",
+      ariaLabelledby: "tab-onboard",
       children: [
         this.viewHead(
           "Step 1 · Onboard",
           "Create your wallet",
           "One passkey becomes the key. Your face becomes the gate — encrypted before it ever leaves this device.",
         ),
-        this.consentCard(),
+        this.onboardSteps(),
         {
-          tag: "section",
-          className: "card",
+          tag: "div",
+          className: "grid onboard-hero",
           children: [
-            ...this.cardHead(ICONS.key, "Identity", "Wallet address"),
-            { tag: "p", className: "hint", children: "Derived from your passkey. No seed phrase exists anywhere." },
+            this.consentCard(),
             {
-              tag: "div",
-              className: "field",
+              tag: "section",
+              className: "card wallet-cta",
               children: [
-                { tag: "label", for: "wallet", children: "Smart account address" },
+                ...this.cardHead(ICONS.key, "Identity", "Wallet address"),
+                { tag: "p", className: "hint", children: "Derived from your passkey. No seed phrase exists anywhere." },
                 {
-                  tag: "input",
-                  id: "wallet",
-                  value: this.state.wallet,
-                  placeholder: "0x…",
-                  spellcheck: false,
-                  onInput: (value: string) => {
-                    this.state.wallet = value.trim();
-                    // No full re-render here: rebuilding the DOM mid-typing
-                    // would drop input focus. Toggle the submit button directly;
-                    // the next render derives the same state from scratch.
-                    const btn = document.getElementById("use-existing");
-                    if (btn instanceof HTMLButtonElement) btn.disabled = this.state.wallet.length === 0;
-                  },
-                },
-              ],
-            },
-            {
-              tag: "div",
-              className: "row",
-              children: [
-                {
-                  tag: "button",
-                  className: "primary",
-                  text: this.state.busy ? "Working…" : "Create passkey →",
-                  disabled: this.state.busy || !isWebAuthnSupported(),
-                  onClick: () => void this.flows.registerPasskey(),
-                },
-                {
-                  tag: "button",
-                  id: "use-existing",
-                  className: "ghost",
-                  text: "Use an existing address",
-                  disabled: this.state.busy || this.state.wallet.length === 0,
-                  onClick: () => void this.refresh(),
-                },
-              ],
-            },
-            !isWebAuthnSupported()
-              ? {
                   tag: "div",
-                  className: "alert error",
+                  className: "field",
                   children: [
-                    { tag: "strong", children: "Passkeys are not supported" },
+                    { tag: "label", for: "wallet", children: "Smart account address" },
                     {
-                      tag: "span",
-                      children:
-                        "Use a recent Chrome, Safari, Edge or Firefox on a device with a screen lock. This is required: the passkey is the wallet's signing key.",
+                      tag: "input",
+                      id: "wallet",
+                      value: this.state.wallet,
+                      placeholder: "0x…",
+                      spellcheck: false,
+                      autocomplete: "off",
+                      inputmode: "text",
+                      onInput: (value: string) => {
+                        this.state.wallet = value.trim();
+                        // No full re-render here: rebuilding the DOM mid-typing
+                        // would drop input focus. Toggle the submit button directly;
+                        // the next render derives the same state from scratch.
+                        const btn = document.getElementById("use-existing");
+                        if (btn instanceof HTMLButtonElement) btn.disabled = this.state.wallet.length === 0;
+                      },
                     },
                   ],
-                }
-              : null,
-          ],
-        },
-        {
-          tag: "section",
-          className: "card",
-          children: [
-            ...this.cardHead(ICONS.shieldCheck, "Devices", "Passkeys"),
-            { tag: "p", className: "hint", children: "Every passkey that can authorize this wallet." },
-            devices.length === 0
-              ? { tag: "p", className: "hint", children: "No passkeys registered yet." }
-              : {
-                  tag: "dl",
-                  className: "kv",
-                  children: devices.flatMap((device: any) => [
-                    { tag: "dt", children: device.label },
-                    { tag: "dd", children: `${device.role} · ${short(device.credentialId)} · used ${timeAgo(device.lastUsedAt)}` },
-                  ]),
                 },
-          ],
-        },
-        {
-          tag: "section",
-          className: "card",
-          children: [
-            ...this.cardHead(ICONS.fingerprint, "Biometrics", "Biometric template"),
-            {
-              tag: "p",
-              className: "hint",
-              children: "Stored encrypted. Only the commitment is ever recorded on-chain.",
-            },
-            enrolled
-              ? {
-                  tag: "dl",
-                  className: "kv",
+                {
+                  tag: "div",
+                  className: "row",
                   children: [
-                    { tag: "dt", children: "Status" },
-                    { tag: "dd", children: `enrolled · v${account.biometric.templateVersion}` },
-                    { tag: "dt", children: "Model" },
-                    { tag: "dd", children: account.biometric.modelVersion },
-                    { tag: "dt", children: "FHE key version" },
-                    { tag: "dd", children: String(account.biometric.fheKeyVersion) },
-                    { tag: "dt", children: "Commitment" },
-                    { tag: "dd", children: short(account.biometric.commitment) },
+                    {
+                      tag: "button",
+                      className: "primary btn-shimmer",
+                      text: this.state.busy ? "Working…" : "Create passkey →",
+                      disabled: this.state.busy || !isWebAuthnSupported(),
+                      onClick: () => void this.flows.registerPasskey(),
+                    },
+                    {
+                      tag: "button",
+                      id: "use-existing",
+                      className: "ghost",
+                      text: "Use an existing address",
+                      disabled: this.state.busy || this.state.wallet.length === 0,
+                      onClick: () => void this.refresh(),
+                    },
                   ],
-                }
-              : { tag: "p", className: "hint", children: "Not enrolled yet." },
-            {
-              tag: "div",
-              className: "row",
-              children: [
-                {
-                  tag: "button",
-                  className: "primary",
-                  text: enrolled ? "Re-enroll face" : "Enroll face",
-                  disabled: this.state.busy || devices.length === 0,
-                  onClick: () => {
-                    this.set({ tab: "onboard" });
-                    void this.flows.enrollBiometric();
-                  },
                 },
-                {
-                  tag: "button",
-                  className: "ghost",
-                  text: "Recovery options",
-                  onClick: () => void this.flows.startRecovery(),
-                },
+                !isWebAuthnSupported()
+                  ? {
+                      tag: "div",
+                      className: "alert error",
+                      children: [
+                        { tag: "strong", children: "Passkeys are not supported" },
+                        {
+                          tag: "span",
+                          children:
+                            "Use a recent Chrome, Safari, Edge or Firefox on a device with a screen lock. This is required: the passkey is the wallet's signing key.",
+                        },
+                      ],
+                    }
+                  : null,
               ],
             },
-            devices.length === 0
-              ? {
+          ],
+        },
+        {
+          tag: "div",
+          className: "grid",
+          children: [
+            {
+              tag: "section",
+              className: "card",
+              children: [
+                ...this.cardHead(ICONS.shieldCheck, "Devices", "Passkeys"),
+                { tag: "p", className: "hint", children: "Every passkey that can authorize this wallet." },
+                devices.length === 0
+                  ? {
+                      tag: "div",
+                      className: "empty-state",
+                      children: [
+                        { tag: "span", className: "empty-icon", html: ICONS.key },
+                        { tag: "p", children: "No passkeys registered yet." },
+                        { tag: "p", className: "hint", children: "Create one above — it takes ten seconds." },
+                      ],
+                    }
+                  : {
+                      tag: "dl",
+                      className: "kv",
+                      children: devices.flatMap((device: any) => [
+                        { tag: "dt", children: device.label },
+                        { tag: "dd", children: `${device.role} · ${short(device.credentialId)} · used ${timeAgo(device.lastUsedAt)}` },
+                      ]),
+                    },
+              ],
+            },
+            {
+              tag: "section",
+              className: "card",
+              children: [
+                ...this.cardHead(ICONS.fingerprint, "Biometrics", "Biometric template"),
+                {
                   tag: "p",
                   className: "hint",
-                  children: "Register a passkey first — recovery must exist before a biometric template is created.",
-                }
-              : null,
+                  children: "Stored encrypted. Only the commitment is ever recorded on-chain.",
+                },
+                enrolled
+                  ? {
+                      tag: "dl",
+                      className: "kv",
+                      children: [
+                        { tag: "dt", children: "Status" },
+                        { tag: "dd", children: `enrolled · v${account.biometric.templateVersion}` },
+                        { tag: "dt", children: "Model" },
+                        { tag: "dd", children: account.biometric.modelVersion },
+                        { tag: "dt", children: "FHE key version" },
+                        { tag: "dd", children: String(account.biometric.fheKeyVersion) },
+                        { tag: "dt", children: "Commitment" },
+                        { tag: "dd", children: short(account.biometric.commitment) },
+                      ],
+                    }
+                  : {
+                      tag: "div",
+                      className: "empty-state",
+                      children: [
+                        { tag: "span", className: "empty-icon", html: ICONS.fingerprint },
+                        { tag: "p", children: "Not enrolled yet." },
+                        { tag: "p", className: "hint", children: "Your face becomes math, then ciphertext — never a photo." },
+                      ],
+                    },
+                {
+                  tag: "div",
+                  className: "row",
+                  children: [
+                    {
+                      tag: "button",
+                      className: "primary btn-shimmer",
+                      text: enrolled ? "Re-enroll face" : "Enroll face",
+                      disabled: this.state.busy || devices.length === 0,
+                      onClick: () => {
+                        this.set({ tab: "onboard" });
+                        void this.flows.enrollBiometric();
+                      },
+                    },
+                    {
+                      tag: "button",
+                      className: "ghost",
+                      text: "Recovery options",
+                      onClick: () => void this.flows.startRecovery(),
+                    },
+                  ],
+                },
+                devices.length === 0
+                  ? {
+                      tag: "p",
+                      className: "hint",
+                      children: "Register a passkey first — recovery must exist before a biometric template is created.",
+                    }
+                  : null,
+              ],
+            },
+            // Enrollment captures on this tab, so the preview must live here too:
+            // the overlay carries the live capture feedback (samples, blockers).
+            this.viewfinderCard(),
           ],
         },
       ],
@@ -487,7 +589,10 @@ export class App {
   private authenticateView(): VNode {
     return {
       tag: "div",
-      className: "grid",
+      className: "grid auth-grid",
+      id: "panel-authenticate",
+      role: "tabpanel",
+      ariaLabelledby: "tab-authenticate",
       children: [
         this.viewHead(
           "Step 2 · Authenticate",
@@ -496,7 +601,7 @@ export class App {
         ),
         {
           tag: "section",
-          className: "card",
+          className: "card auth-card beam-card",
           children: [
             ...this.cardHead(ICONS.lock, "Authorize", "Authorize a transaction"),
             { tag: "p", className: "hint", children: "Face, passkey and the exact operation are all required." },
@@ -520,7 +625,7 @@ export class App {
               children: [
                 {
                   tag: "button",
-                  className: "primary",
+                  className: "primary btn-shimmer",
                   text: this.state.busy ? "Working…" : "Authenticate and submit →",
                   disabled: this.state.busy || !this.state.wallet,
                   onClick: () => void this.flows.authenticate(),
@@ -549,9 +654,10 @@ export class App {
   }
 
   private viewfinderCard(): VNode {
+    const live = this.camera.streaming;
     return {
       tag: "section",
-      className: "card",
+      className: "card capture-card",
       children: [
         ...this.cardHead(ICONS.camera, "Camera", "Capture"),
         {
@@ -562,7 +668,7 @@ export class App {
         {
           tag: "div",
           className: "viewfinder",
-          dataset: { live: this.camera.streaming ? "true" : "false" },
+          dataset: { live: live ? "true" : "false" },
           children: [
             {
               tag: "video",
@@ -575,6 +681,8 @@ export class App {
             { tag: "span", className: "corner tr" },
             { tag: "span", className: "corner bl" },
             { tag: "span", className: "corner br" },
+            { tag: "div", className: "face-oval", ariaHidden: "true" },
+            live ? { tag: "span", className: "live-pill", children: [{ tag: "span", className: "dot" }, "LIVE"] } : null,
             {
               tag: "div",
               className: "overlay",
@@ -583,7 +691,18 @@ export class App {
           ],
         },
         this.state.progress !== undefined
-          ? { tag: "progress", value: this.state.progress, max: 1, ariaLabel: "capture progress" }
+          ? {
+              tag: "div",
+              className: "capture-meter",
+              children: [
+                { tag: "progress", value: this.state.progress, max: 1, ariaLabel: "capture progress" },
+                {
+                  tag: "span",
+                  className: "meter-label",
+                  text: `${Math.round(this.state.progress * 7)}/7 samples`,
+                },
+              ],
+            }
           : null,
         {
           tag: "div",
@@ -591,8 +710,8 @@ export class App {
           children: [
             {
               tag: "button",
-              text: this.camera.streaming ? "Stop camera" : "Start camera",
-              onClick: () => void (this.camera.streaming ? this.camera.stop() : this.camera.start()),
+              text: live ? "Stop camera" : "Start camera",
+              onClick: () => void (live ? this.camera.stop() : this.camera.start()),
             },
             {
               tag: "button",
@@ -897,6 +1016,7 @@ export class App {
 
   private diagnosticsView(): VNode {
     const config = this.state.config;
+    const platform = this.state.platformAuth;
     const stats = (entries: Array<[string, string]>): VNode => ({
       tag: "dl",
       className: "stats",
@@ -912,6 +1032,29 @@ export class App {
     return {
       tag: "div",
       className: "grid",
+      children: [
+        {
+          tag: "section",
+          className: "card",
+          children: [
+            ...this.cardHead(ICONS.key, "Browser", "This browser"),
+            {
+              tag: "p",
+              className: "hint",
+              children: "Whether this browser can do a local passkey ceremony right now. If the platform row says no, the OS picker can only offer a phone or security key.",
+            },
+            platform
+              ? stats([
+                  ["WebAuthn", platform.webauthn ? "available" : "unavailable"],
+                  ["Platform UV", platform.platformUv ? "available (Hello / Touch ID)" : "unavailable — no Hello PIN visible to the browser"],
+                  ["Conditional mediation", platform.conditionalMediation ? "available" : "unavailable"],
+                ])
+              : { tag: "p", className: "hint", children: "Probing the browser…" },
+          ],
+        },
+        {
+      tag: "section",
+      className: "card",
       children: [
         this.viewHead(
           "Diagnostics",
@@ -941,36 +1084,51 @@ export class App {
           ],
         },
       ],
+        },
+      ],
     };
   }
 
   private pipelineView(): VNode {
     const order = STAGES.map((s) => s.stage);
     const currentIndex = order.indexOf(this.state.stage);
+    const doneCount = this.state.stage === "success" ? order.length : Math.max(0, currentIndex);
+    const open = this.state.pipelineOpen || this.state.busy || Boolean(this.state.failure);
+    const stageLabel = STAGES[currentIndex]?.label ?? "Idle";
     return {
       tag: "section",
-      className: "card",
+      className: "card pipeline-card",
       children: [
-        ...this.cardHead(ICONS.activity, "Pipeline", "Authentication state"),
         {
-          tag: "ol",
-          className: "pipeline",
-          children: STAGES.map((entry, index) => {
-            const state =
-              this.state.stage === "success" || index < currentIndex
-                ? "done"
-                : entry.stage === this.state.stage
-                  ? "active"
-                  : "pending";
-            return {
-              tag: "li",
-              dataset: { state },
+          tag: "div",
+          className: "row between pipeline-head",
+          children: [
+            {
+              tag: "div",
               children: [
-                { tag: "span", className: "mark", children: state === "done" ? "✓" : state === "active" ? "▸" : "·" },
-                { tag: "span", children: entry.label },
+                { tag: "p", className: "eyebrow", text: "Pipeline" },
+                {
+                  tag: "h2",
+                  children: [
+                    { tag: "span", className: "icon", html: ICONS.activity },
+                    { tag: "span", text: `Authentication state · ${doneCount}/${order.length}` },
+                  ],
+                },
               ],
-            };
-          }),
+            },
+            {
+              tag: "button",
+              className: "ghost pipeline-toggle",
+              ariaExpanded: open ? "true" : "false",
+              text: open ? "Hide steps" : `Show steps · ${stageLabel}`,
+              onClick: () => this.set({ pipelineOpen: !open }),
+            },
+          ],
+        },
+        {
+          tag: "div",
+          className: "pipeline-progress",
+          children: [{ tag: "progress", value: doneCount, max: order.length, ariaLabel: "authentication progress" }],
         },
         this.state.livenessInstruction
           ? {
@@ -1017,6 +1175,28 @@ export class App {
               ],
             }
           : null,
+        open
+          ? {
+              tag: "ol",
+              className: "pipeline",
+              children: STAGES.map((entry, index) => {
+                const state =
+                  this.state.stage === "success" || index < currentIndex
+                    ? "done"
+                    : entry.stage === this.state.stage
+                      ? "active"
+                      : "pending";
+                return {
+                  tag: "li",
+                  dataset: { state },
+                  children: [
+                    { tag: "span", className: "mark", children: state === "done" ? "✓" : state === "active" ? "▸" : "·" },
+                    { tag: "span", children: entry.label },
+                  ],
+                };
+              }),
+            }
+          : null,
       ],
     };
   }
@@ -1061,6 +1241,11 @@ export class App {
         app.set({ config: await response.json() });
       } catch {
         app.set({ notice: { kind: "error", text: "Could not load the gateway configuration." } });
+      }
+      try {
+        app.set({ platformAuth: await getPlatformAuthInfo() });
+      } catch {
+        app.set({ platformAuth: { webauthn: false, platformUv: false, conditionalMediation: false } });
       }
       await app.refresh();
       app.render();

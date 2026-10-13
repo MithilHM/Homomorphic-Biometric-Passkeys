@@ -31,7 +31,8 @@ export function Button({ variant = "primary", size = "md", className, type = "bu
     <button
       type={type}
       className={cn(
-        "inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg font-semibold transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50",
+        variant === "primary" && "btn-shine shadow-[0_8px_30px_rgb(34_197_94/0.3)] hover:-translate-y-px hover:shadow-[0_12px_40px_rgb(34_197_94/0.4)] active:translate-y-px",
         buttonVariants[variant],
         buttonSizes[size],
         className,
@@ -62,7 +63,7 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
 /* Card — full composition */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-2xl border border-border bg-card text-card-foreground", className)}>{children}</div>
+    <div className={cn("card-premium rounded-2xl border border-border bg-card text-card-foreground", className)}>{children}</div>
   );
 }
 
@@ -196,11 +197,55 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
 }
 
 /* Stat */
-export function Stat({ value, label }: { value: string; label: string }) {
+export function Stat({ value, label, ticker = false }: { value: string; label: string; ticker?: boolean }) {
+  const numeric = ticker ? Number.parseInt(value, 10) : Number.NaN;
   return (
     <div className="flex flex-col gap-1">
-      <span className="font-mono text-2xl font-semibold text-foreground sm:text-3xl">{value}</span>
+      <span className="font-mono text-2xl font-semibold text-foreground sm:text-3xl">
+        {ticker && !Number.isNaN(numeric) ? (
+          <NumberTickerInline value={numeric} />
+        ) : (
+          value
+        )}
+      </span>
       <span className="text-xs uppercase tracking-[0.15em] text-muted-foreground">{label}</span>
     </div>
   );
+}
+
+function NumberTickerInline({ value }: { value: number }) {
+  const [display, setDisplay] = useState(0);
+  const ref = useRef<HTMLSpanElement>(null);
+  const started = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setDisplay(value);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !started.current) {
+          started.current = true;
+          if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+            setDisplay(value);
+            return;
+          }
+          const t0 = performance.now();
+          const tick = (t: number) => {
+            const p = Math.min(1, (t - t0) / 1100);
+            setDisplay(Math.round((1 - Math.pow(1 - p, 3)) * value));
+            if (p < 1) requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [value]);
+  return <span ref={ref}>{display}</span>;
 }

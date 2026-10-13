@@ -15,6 +15,7 @@ export interface VNode {
   children?: VChild | VChild[];
   onClick?: () => void;
   onInput?: (value: string) => void;
+  onKeydown?: (event: KeyboardEvent) => void;
   dataset?: Record<string, string>;
   id?: string;
   role?: string;
@@ -26,9 +27,15 @@ const propertyMap: Record<string, string> = {
   className: "class",
   for: "htmlFor",
   spellcheck: "spellcheck",
-  tabIndex: "tabIndex",
+  tabIndex: "tabindex",
   ariaLabel: "aria-label",
   ariaSelected: "aria-selected",
+  ariaExpanded: "aria-expanded",
+  ariaControls: "aria-controls",
+  ariaLabelledby: "aria-labelledby",
+  ariaHidden: "aria-hidden",
+  autocomplete: "autocomplete",
+  inputmode: "inputmode",
   playsInline: "playsinline",
   muted: "muted",
 };
@@ -38,7 +45,7 @@ export function render(node: VNode | string | number): Node {
 
   const element = document.createElement(node.tag);
   for (const [key, value] of Object.entries(node)) {
-    if (key === "children" || key === "onClick" || key === "onInput" || key === "dataset") continue;
+    if (key === "children" || key === "onClick" || key === "onInput" || key === "onKeydown" || key === "dataset") continue;
     if (value === undefined || value === null || value === false) continue;
 
     const attribute = propertyMap[key] ?? key;
@@ -67,6 +74,7 @@ export function render(node: VNode | string | number): Node {
     for (const [key, value] of Object.entries(node.dataset)) element.dataset[key] = value;
   }
   if (node.onClick) element.addEventListener("click", node.onClick);
+  if (node.onKeydown) element.addEventListener("keydown", node.onKeydown as EventListener);
   if (node.onInput) {
     const handler = (event: Event) => {
       const target = event.target as HTMLInputElement | HTMLSelectElement | null;

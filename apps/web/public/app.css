@@ -638,6 +638,189 @@ code { font-family: var(--mono); font-size: 0.85em; }
   .tabs button { flex: 1 1 45%; }
 }
 
+@media (max-width: 720px) {
+  #app { padding: 1.25rem 1rem 4rem; }
+  header.masthead { padding: 1.25rem; }
+  header.masthead h1 { font-size: 1.25rem; }
+  .tabs button { flex: 1 1 45%; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Premium pass 2 — Magic-UI idioms ported to zero-dep CSS + onboarding hero.
+ * ------------------------------------------------------------------------- */
+
+/* Traveling border beam (CSS-only BorderBeam): conic rotor masked to border. */
+.beam-card, .beam-frame { position: relative; }
+.beam-card::after, .beam-frame::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--beam-angle, 0deg), transparent 0deg, rgb(74 222 128 / 0.9) 40deg, rgb(131 110 249 / 0.9) 80deg, transparent 120deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: beam-orbit 6s linear infinite;
+  pointer-events: none;
+  opacity: 0.85;
+}
+@property --beam-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@keyframes beam-orbit { to { --beam-angle: 360deg; } }
+.beam-frame::before { border-radius: var(--radius-lg); }
+/* Simpler robust rotor: rotate a oversized conic layer. */
+.beam-card, .beam-frame { overflow: hidden; isolation: isolate; }
+
+/* Shiny headline hook (AnimatedShinyText idiom). */
+.shiny {
+  background-image: linear-gradient(110deg, rgb(74 222 128 / 0.55) 35%, #fff 50%, rgb(74 222 128 / 0.55) 65%);
+  background-size: 140px 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: shiny-sweep 3.4s linear infinite;
+}
+@keyframes shiny-sweep { from { background-position: -140px 0; } to { background-position: calc(100% + 140px) 0; } }
+
+/* Shimmer primary CTA (ShimmerButton idiom). */
+.btn-shimmer { position: relative; overflow: hidden; }
+.btn-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.5) 50%, transparent 70%);
+  transform: translateX(-130%);
+  animation: btn-shine 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes btn-shine { 0%, 55% { transform: translateX(-130%); } 90%, 100% { transform: translateX(130%); } }
+
+/* Onboarding hero: consent + wallet side-by-side on desktop. */
+.onboard { display: flex; flex-direction: column; gap: 1rem; }
+.onboard-hero { grid-template-columns: 1.05fr 0.95fr; align-items: stretch; }
+.consent-hero {
+  background:
+    linear-gradient(180deg, rgb(34 197 94 / 0.08), transparent 40%),
+    linear-gradient(180deg, rgb(27 35 54 / 0.85), rgb(27 35 54 / 1));
+}
+.trust-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 1rem; }
+.wallet-cta { border-color: rgb(34 197 94 / 0.3); }
+
+/* Onboarding stepper strip. */
+.onboard-steps {
+  list-style: none;
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.9rem 0 0;
+  padding: 0.55rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: rgb(11 17 32 / 0.7);
+}
+.onboard-steps li {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.onboard-steps li[data-state="done"] { color: var(--accent-bright); background: rgb(34 197 94 / 0.08); }
+.onboard-steps li[data-state="active"] { color: var(--text); background: var(--raised); box-shadow: inset 0 0 0 1px rgb(34 197 94 / 0.3); }
+.step-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  background: var(--raised);
+  border: 1px solid var(--line-soft);
+  flex: none;
+}
+.onboard-steps li[data-state="done"] .step-dot { background: rgb(34 197 94 / 0.2); border-color: var(--accent); color: var(--accent-bright); }
+.onboard-steps li[data-state="active"] .step-dot { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* Confident empty states. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: rgb(11 17 32 / 0.5);
+  margin-bottom: 1rem;
+}
+.empty-state p { margin: 0; font-size: 0.9rem; }
+.empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 10px;
+  color: var(--accent);
+  background: rgb(34 197 94 / 0.1);
+  border: 1px solid rgb(34 197 94 / 0.25);
+  margin-bottom: 0.25rem;
+}
+.empty-icon svg { width: 1.15rem; height: 1.15rem; }
+
+/* Capture card: face oval, mirror selfie, live pill, meter. */
+.capture-card .viewfinder video { transform: scaleX(-1); }
+.face-oval {
+  position: absolute;
+  width: 52%;
+  height: 72%;
+  border: 2px dashed rgb(74 222 128 / 0.65);
+  border-radius: 50%;
+  box-shadow: 0 0 24px rgb(34 197 94 / 0.15), inset 0 0 24px rgb(34 197 94 / 0.08);
+}
+.live-pill {
+  position: absolute;
+  top: 0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  border: 1px solid rgb(74 222 128 / 0.5);
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  backdrop-filter: blur(4px);
+}
+.live-pill .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: #f87171; animation: pulse-dot 1.6s ease-in-out infinite; }
+.capture-meter { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.7rem; }
+.capture-meter progress { flex: 1; }
+.meter-label { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+
+/* Auth grid: form + capture side-by-side on wide screens. */
+.auth-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+.auth-grid .view-head { grid-column: 1 / -1; }
+.auth-card { grid-column: span 1; }
+
+/* Pipeline: collapsible header + progress rail. */
+.pipeline-card { grid-column: 1 / -1; }
+.pipeline-head h2 { font-size: 1rem; }
+.pipeline-toggle { font-size: 0.78rem; min-height: 2rem; padding: 0.25rem 0.8rem; border-radius: 999px; flex: none; }
+.pipeline-progress { margin-top: 0.8rem; }
+
+@media (max-width: 900px) {
+  .onboard-hero, .auth-grid { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   * { transition: none !important; animation: none !important; }

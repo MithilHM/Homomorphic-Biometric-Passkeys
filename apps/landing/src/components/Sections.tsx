@@ -17,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import DitherVeil from "./DitherVeil";
+import { AuroraText, BorderBeam, ShimmerButton, ShinyText } from "./magic";
 import { Accordion, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Reveal, SectionHeading, Stat } from "./ui";
 
 export const HERO_SRC =
@@ -29,6 +30,7 @@ const doc = (p: string) => `${REPO}/blob/main/${p}`;
 
 const NAV = [
   { href: "#how", label: "How it works" },
+  { href: "#start", label: "Get started" },
   { href: "#honesty", label: "Honest limits" },
   { href: "#stack", label: "Live status" },
   { href: "#faq", label: "FAQ" },
@@ -38,12 +40,15 @@ export function Nav() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-5">
-        <a href="#top" className="flex items-center gap-2.5" aria-label="Face wallet home">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+        <a href="#top" className="group flex items-center gap-2.5" aria-label="Face wallet home">
+          <span className="relative flex size-8 items-center justify-center overflow-hidden rounded-lg bg-accent/15 text-accent transition-shadow group-hover:shadow-[0_0_20px_rgb(34_197_94/0.4)]">
             <ScanFace size={19} aria-hidden />
           </span>
           <span className="font-mono text-sm font-semibold tracking-tight">
             face<span className="text-accent">/</span>wallet
+            <span className="ml-2 hidden rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 align-middle font-mono text-[10px] font-medium text-accent-bright sm:inline">
+              ● live on Monad
+            </span>
           </span>
         </a>
         <nav aria-label="Primary" className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
@@ -58,13 +63,13 @@ export function Nav() {
             href={REPO}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3.5 text-sm text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
+            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-border px-3.5 text-sm text-muted-foreground transition-all hover:-translate-y-px hover:border-accent hover:text-foreground"
           >
             <Code2 size={15} aria-hidden /> <span className="hidden sm:inline">Source</span>
           </a>
           <a
-            href="#stack"
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-bright"
+            href="#start"
+            className="btn-shine inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-semibold text-on-accent transition-all hover:-translate-y-px hover:bg-accent-bright hover:shadow-[0_8px_30px_rgb(34_197_94/0.4)]"
           >
             Try it <ArrowRight size={15} aria-hidden />
           </a>
@@ -98,24 +103,31 @@ export function Hero() {
           <div className="flex flex-wrap gap-2 [text-shadow:none]">
             <Badge tone="green">No seed phrases</Badge>
             <Badge tone="green">Face unlock</Badge>
-            <Badge tone="neutral">You hold the keys</Badge>
+            <Badge tone="neutral">CKKS homomorphic match</Badge>
+            <Badge tone="neutral">ERC-4337 · Monad 143</Badge>
           </div>
           <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
             Your face unlocks your wallet.
-            <span className="text-accent-bright"> Nobody sees your face.</span>
+            <br />
+            <AuroraText colors={["#4ade80", "#38bdf8", "#836ef9", "#4ade80"]} speed={0.9}>
+              Nobody sees your face.
+            </AuroraText>
           </h1>
           <p className="max-w-xl text-base leading-relaxed text-slate-200 sm:text-lg">
             A crypto wallet that opens with a look instead of a written-down secret. Your face is checked on
             your own device, and the service that verifies you never receives anything it could recognize.
           </p>
-          <div className="flex flex-wrap gap-3 [text-shadow:none]">
-            <Button size="lg" onClick={() => document.querySelector("#stack")?.scrollIntoView({ behavior: "smooth" })}>
-              Check the live service <ArrowRight size={17} aria-hidden />
-            </Button>
+          <div className="flex flex-wrap items-center gap-3 [text-shadow:none]">
+            <ShimmerButton onClick={() => document.querySelector("#start")?.scrollIntoView({ behavior: "smooth" })}>
+              Create your wallet <ArrowRight size={17} aria-hidden />
+            </ShimmerButton>
             <Button size="lg" variant="outline" className="bg-background/50 backdrop-blur-sm" onClick={() => window.open(doc("docs/architecture.md"), "_blank", "noopener")}>
               How it works
             </Button>
           </div>
+          <p className="font-mono text-[11px] tracking-wide text-slate-400 [text-shadow:none]">
+            <ShinyText>Move your pointer — the veil lifts where you look. Your pixels never leave this page.</ShinyText>
+          </p>
         </div>
       </div>
     </section>
@@ -128,9 +140,9 @@ export function Stats() {
   return (
     <section aria-label="At a glance" className="border-b border-border/60">
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-5 py-12 sm:grid-cols-4">
-        <Reveal><Stat value="0" label="Seed phrases to write down" /></Reveal>
-        <Reveal><Stat value="1" label="Look to unlock" /></Reveal>
-        <Reveal><Stat value="0" label="Face data shared with servers" /></Reveal>
+        <Reveal><Stat value="0" label="Seed phrases to write down" ticker /></Reveal>
+        <Reveal><Stat value="1" label="Look to unlock" ticker /></Reveal>
+        <Reveal><Stat value="0" label="Face data shared with servers" ticker /></Reveal>
         <Reveal><Stat value="48h" label="Safety delay on recovery" /></Reveal>
       </div>
     </section>
@@ -162,7 +174,8 @@ export function HowItWorks() {
         {STEPS.map((s, i) => (
           <li key={s.title}>
             <Reveal>
-              <Card className="h-full transition-colors hover:border-accent/50">
+              <Card className={`h-full ${i === 0 ? "relative overflow-hidden border-accent/40" : ""}`}>
+                {i === 0 && <BorderBeam size={100} duration={5} colorFrom="#4ade80" colorTo="#38bdf8" />}
                 <CardHeader>
                   <span className="flex size-9 items-center justify-center rounded-lg bg-accent/12 text-accent">
                     <s.icon size={18} aria-hidden />
@@ -178,6 +191,92 @@ export function HowItWorks() {
           </li>
         ))}
       </ol>
+    </section>
+  );
+}
+
+/* ---------------- onboarding preview (marketing → app handoff) ---------------- */
+
+const ONBOARD_STEPS = [
+  { n: "01", icon: KeyRound, title: "Create a passkey", body: "One tap makes your device key. No seed phrase is ever shown, written, or stored anywhere." },
+  { n: "02", icon: ScanFace, title: "Enroll your face — encrypted", body: "Seven glances become one encrypted template on your device. Plaintext never leaves it." },
+  { n: "03", icon: KeyRound, title: "Look to spend", body: "Every payment needs face + passkey + exact recipient, together. Replays die on contact." },
+];
+
+export function OnboardingPreview() {
+  return (
+    <section id="start" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
+      <Reveal>
+        <SectionHeading
+          eyebrow="Onboarding · 90 seconds"
+          title="From nothing to a face-locked wallet"
+          lede="Three steps, in order, with nothing to write down. This is exactly what the wallet app walks you through."
+        />
+      </Reveal>
+      <div className="mt-10 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <ol className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
+          {ONBOARD_STEPS.map((s, i) => (
+            <li key={s.n}>
+              <Reveal>
+                <Card className={`relative h-full overflow-hidden ${i === 0 ? "border-accent/40" : ""}`}>
+                  {i === 0 && <BorderBeam size={90} duration={5.5} colorFrom="#4ade80" colorTo="#836ef9" />}
+                  <CardHeader>
+                    <span className="flex items-center gap-3">
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-accent/12 font-mono text-sm font-semibold text-accent">
+                        {s.n}
+                      </span>
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-foreground">
+                        <s.icon size={18} aria-hidden />
+                      </span>
+                    </span>
+                    <CardTitle>{s.title}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription>{s.body}</CardDescription>
+                  </CardContent>
+                </Card>
+              </Reveal>
+            </li>
+          ))}
+        </ol>
+        <Reveal>
+          <div className="relative flex h-full flex-col justify-between gap-6 overflow-hidden rounded-2xl border border-accent/30 bg-gradient-to-b from-accent/10 via-card to-card p-8">
+            <BorderBeam size={140} duration={7} colorFrom="#4ade80" colorTo="#38bdf8" borderWidth={1.5} />
+            <div className="flex flex-col gap-3">
+              <p className="font-mono text-xs font-semibold uppercase tracking-[0.2em] text-accent">Your privacy, up front</p>
+              <p className="text-2xl font-bold leading-tight tracking-tight">
+                Camera frames never leave your device.{" "}
+                <AuroraText colors={["#4ade80", "#38bdf8", "#836ef9", "#4ade80"]} speed={0.8}>
+                  Ever.
+                </AuroraText>
+              </p>
+              <ul className="mt-2 flex flex-col gap-2.5 text-sm leading-relaxed text-muted-foreground">
+                {[
+                  "Frames are discarded after each capture",
+                  "Vectors are encrypted before upload",
+                  "Backend compares ciphertext only",
+                  "Passkey — not face — is the spending key",
+                ].map((t) => (
+                  <li key={t} className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/10 text-[11px] font-bold text-accent-bright">
+                      ✓
+                    </span>
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex flex-col gap-3">
+              <ShimmerButton onClick={() => document.querySelector("#stack")?.scrollIntoView({ behavior: "smooth" })}>
+                Open the live wallet <ArrowRight size={17} aria-hidden />
+              </ShimmerButton>
+              <p className="text-center font-mono text-[11px] text-muted-foreground">
+                Runs locally · Monad testnet 143 · open source
+              </p>
+            </div>
+          </div>
+        </Reveal>
+      </div>
     </section>
   );
 }
