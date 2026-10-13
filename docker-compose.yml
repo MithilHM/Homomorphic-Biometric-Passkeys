@@ -12,7 +12,10 @@ name: homobio
 services:
   fhe-coprocessor:
     build:
-      context: ..
+      # The compose file lives at the repo root, so the context IS the root.
+      # (A previous `context: ..` pointed at the parent directory and every
+      # COPY in the Dockerfiles missed.)
+      context: .
       dockerfile: infra/docker/Dockerfile.fhe
     image: homobio/fhe-coprocessor:local
     restart: unless-stopped
@@ -21,7 +24,9 @@ services:
       FHE_PORT: "5001"
       FHE_SERVICE_TOKEN: ${FHE_SERVICE_TOKEN:?FHE_SERVICE_TOKEN must be set}
       FHE_ERROR_BOUND: ${FHE_ERROR_BOUND:-0.001953125}
-      FHE_REUSE_KEYS: ${FHE_REUSE_KEYS:-false}
+      # true: the key set lives on the shared volume, so a restart must reuse
+      # it — regenerating orphans every enrolled template (fhe_key_rotation).
+      FHE_REUSE_KEYS: ${FHE_REUSE_KEYS:-true}
       CHAIN_ID: ${CHAIN_ID:-143}
       HOMOBIO_DATA_DIR: /app/.data
     volumes:
@@ -51,7 +56,7 @@ services:
 
   gateway:
     build:
-      context: ..
+      context: .
       dockerfile: infra/docker/Dockerfile.gateway
     image: homobio/gateway:local
     restart: unless-stopped
@@ -75,7 +80,9 @@ services:
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
       WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-Homomorphic Biometric Passkeys}
       WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-http://localhost:5000}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5000}
+      # Local dev serves the marketing site on :5173 too; same-origin proxying
+      # is preferred, but direct access needs the origin listed here.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5000,http://localhost:5173}
       DEFAULT_POLICY_ID: ${DEFAULT_POLICY_ID:-policy-standard-v1}
       MODEL_VERSION: ${MODEL_VERSION:-rp-canonical-v1}
       RELAYER_DRY_RUN: ${RELAYER_DRY_RUN:-true}
