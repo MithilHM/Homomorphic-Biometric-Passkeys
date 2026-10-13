@@ -8,19 +8,17 @@
  *   (2) authorization                   -> WebAuthn
  *   (3) verifiability of the decision   -> this service
  *
- * The service signs the canonical authorization hash with a secp256k1 key so
- * the on-chain verifier can use `ecrecover`, and it holds one share of the FHE
- * decryption committee.
+ * The service signs the canonical authorization hash with a secp256k1 key using
+ * standard EIP-191 personal-message signing — exactly what
+ * `AuthorizationVerifier._recover` verifies on-chain with `ecrecover`:
+ *   digest    = keccak256("\x19Ethereum Signed Message:\n32" || attestationHash)
+ *   signature = 65-byte r || s || v (v is 27 or 28)
+ * The signer address is the last 20 bytes of keccak256(X || Y) (no 0x04 prefix).
  */
 
-import {
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  sign as cryptoSign,
-  verify as cryptoVerify,
-} from "node:crypto";
-import { bytesToHex, hexToBytes, keccak256, keccak256Hex, nowSeconds } from "@homobio/crypto-utils";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { bytesToHex, concat, hexToBytes, keccak256, keccak256Hex, nowSeconds, randomBytes } from "@homobio/crypto-utils";
 import {
   authorizationHashHex,
   resultCommitmentHex,
@@ -30,51 +28,53 @@ import {
   ProofSystem,
 } from "@homobio/protocol-types";
 
-const EIP191_PREFIX = Buffer.from("\x19Ethereum Signed Message:\n32", "utf-8");
+export const EIP191_PREFIX = new TextEncoder().encode("\x19Ethereum Signed Message:\n32");
 
 export interface CommitteeKey {
   address: string;
   publicKeyPem: string;
 }
 
+function toRawBytes(value: Uint8Array): Uint8Array {
+  return value instanceof Uint8Array && value.constructor.name === "Uint8Array"
+    ? value
+    : Uint8Array.from(value);
+}
+
 export class ProofService {
-  private readonly privateKey: import("node:crypto").KeyObject;
+  private readonly privateKeyBytes: Uint8Array;
   private readonly publicKeyPem: string;
   readonly address: string;
 
-  constructor(secretPem?: string) {
-    if (secretPem) {
-      this.privateKey = createPrivateKey(secretPem);
-      this.publicKeyPem = createPublicKey(this.privateKey).export({ type: "spki", format: "pem" }).toString();
-    } else {
-      const generated = generateKeyPairSync("ec", { namedCurve: "secp256k1" });
-      this.privateKey = generated.privateKey;
-      this.publicKeyPem = generated.publicKey.export({ type: "spki", format: "pem" }).toString();
-    }
-    this.address = publicKeyToAddress(this.publicKeyPem);
+  constructor(secret?: string) {
+    this.privateKeyBytes = loadPrivateKey(secret);
+    const publicKey = secp256k1.getPublicKey(this.privateKeyBytes, false);
+    this.address = addressFromUncompressedPoint(publicKey);
+    this.publicKeyPem = pemFromRawPrivateKey(this.privateKeyBytes, publicKey);
   }
 
   committeeKey(): CommitteeKey {
     return { address: this.address, publicKeyPem: this.publicKeyPem };
   }
 
-  /** keccak256("\x19Ethereum Signed Message:\n32" || keccak256(digest)) */
-  static ethSignedDigest(digest: string): Buffer {
-    const inner = keccak256(hexToBytes(`0x${digest}`));
-    return Buffer.from(keccak256(Buffer.concat([EIP191_PREFIX, Buffer.from(inner)])));
+  /** keccak256("\x19Ethereum Signed Message:\n32" || attestationHashBytes) */
+  static ethSignedDigest(digest: string): Uint8Array {
+    return toRawBytes(keccak256(concat(EIP191_PREFIX, hexToBytes(digest.startsWith("0x") ? digest : `0x${digest}`))));
   }
 
   /**
    * Sign the canonical authorization hash.
    *
-   * EIP-191 prefixing means the signature can never be replayed as a raw
-   * transaction on another chain.
+   * Standard EIP-191 personal-message signing over the 32-byte attestation
+   * hash, so the signature verifies both here and on-chain via `ecrecover`.
    */
   signAttestation(fields: AuthorizationFields): { attestationHash: string; signature: string } {
     const attestationHash = authorizationHashHex(fields);
-    const prefixed = ProofService.ethSignedDigest(attestationHash);
-    const signature = cryptoSign("sha256", prefixed, { key: this.privateKey, dsaEncoding: "ieee-p1363" });
-    return { attestationHash, signature: `0x${signature.toString("hex")}` };
+    const digest = toRawBytes(ProofService.ethSignedDigest(attestationHash));
+    const sig = secp256k1.sign(digest, this.privateKeyBytes);
+    const compact = toRawBytes(sig.toCompactRawBytes());
+    const v = 27 + (sig.recovery ?? 0);
+    return { attestationHash, signature: `0x${bytesToHex(compact)}${v.toString(16).padStart(2, "0")}` };
   }
   /**
    * Build the authorization object the account consumes.
@@ -137,30 +137,97 @@ export class ProofService {
   verify(authorization: BiometricAuthorization, committeeKey: CommitteeKey): boolean {
     if (authorizationHashHex(authorization) !== authorization.attestationHash) return false;
     try {
-      const prefixed = ProofService.ethSignedDigest(authorization.attestationHash);
-      const raw = authorization.signature.startsWith("0x")
-        ? authorization.signature
-        : `0x${authorization.signature}`;
-      const signature = Buffer.from(hexToBytes(raw));
-      // Web3 signatures are raw r||s, which is exactly what `sign` produced.
-      return cryptoVerify(
-        "sha256",
-        prefixed,
-        { key: createPublicKey(committeeKey.publicKeyPem), dsaEncoding: "ieee-p1363" },
-        signature,
-      );
+      const digest = toRawBytes(ProofService.ethSignedDigest(authorization.attestationHash));
+      const raw = authorization.signature.startsWith("0x") ? authorization.signature : `0x${authorization.signature}`;
+      const bytes = toRawBytes(hexToBytes(raw));
+      // Standard 65-byte r || s || v. A legacy 64-byte r || s is tried with
+      // both recovery bits so rotations never brick in-flight authorizations.
+      const candidates: Array<{ compact: Uint8Array; recovery: number }> = [];
+      if (bytes.length === 65) {
+        let v = bytes[64];
+        if (v < 27) v += 27;
+        if (v !== 27 && v !== 28) return false;
+        candidates.push({ compact: bytes.slice(0, 64), recovery: v - 27 });
+      } else if (bytes.length === 64) {
+        candidates.push({ compact: bytes, recovery: 0 }, { compact: bytes, recovery: 1 });
+      } else {
+        return false;
+      }
+      const expected = committeeKey.address.toLowerCase();
+      for (const { compact, recovery } of candidates) {
+        const signature = secp256k1.Signature.fromCompact(compact).addRecoveryBit(recovery);
+        const point = toRawBytes(signature.recoverPublicKey(digest).toRawBytes(false));
+        if (addressFromUncompressedPoint(point) === expected) return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
 }
 
+/** Ethereum address from an uncompressed (65-byte, 0x04-prefixed) point. */
+export function addressFromUncompressedPoint(point: Uint8Array): string {
+  const raw = toRawBytes(point);
+  const body = raw.length === 65 ? raw.slice(1) : raw;
+  return `0x${bytesToHex(toRawBytes(keccak256(body))).slice(-40)}`;
+}
+
+/** Legacy helper: address from a PEM SPKI key (drops the 0x04 prefix). */
 export function publicKeyToAddress(publicKeyPem: string): string {
   const spki = createPublicKey(publicKeyPem).export({ type: "spki", format: "der" }) as Buffer;
-  // SubjectPublicKeyInfo for secp256k1 has a 23-byte prefix; the uncompressed
-  // point is the last 65 bytes and the address is the keccak256 tail.
-  const point = spki.subarray(spki.length - 65);
-  return `0x${bytesToHex(keccak256(point)).slice(-40)}`;
+  // SubjectPublicKeyInfo for secp256k1 ends with the 65-byte uncompressed
+  // point; the address commits to X || Y only, never the 0x04 prefix.
+  const point = new Uint8Array(spki.subarray(spki.length - 65));
+  return addressFromUncompressedPoint(point);
+}
+
+function loadPrivateKey(secret?: string): Uint8Array {
+  if (secret && secret.includes("BEGIN")) {
+    const key = createPrivateKey(secret);
+    const jwk = key.export({ format: "jwk" }) as { d?: string; crv?: string };
+    if ((jwk.crv !== "secp256K1" && jwk.crv !== "secp256k1") || !jwk.d) {
+      throw new Error("committee secret is not a secp256k1 private key");
+    }
+    const raw = base64UrlToBytes(jwk.d);
+    if (raw.length !== 32) throw new Error("committee secret is not 32 bytes");
+    return toRawBytes(raw);
+  }
+  if (secret && /^0x[0-9a-fA-F]{64}$/.test(secret.trim())) {
+    return toRawBytes(hexToBytes(secret.trim()));
+  }
+  return toRawBytes(randomBytes(32));
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = typeof atob === "function" ? atob(padded) : Buffer.from(padded, "base64").toString("binary");
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+function pemFromRawPrivateKey(priv: Uint8Array, pub: Uint8Array): string {
+  const x = bytesToHex(pub.slice(1, 33));
+  const y = bytesToHex(pub.slice(33, 65));
+  const d = bytesToHex(priv);
+  const jwk = {
+    kty: "EC",
+    crv: "secp256k1",
+    x: hexToBase64Url(x),
+    y: hexToBase64Url(y),
+    d: hexToBase64Url(d),
+  };
+  const key = createPrivateKey({ key: jwk, format: "jwk" });
+  return createPublicKey(key).export({ type: "spki", format: "pem" }).toString();
+}
+
+function hexToBase64Url(hex: string): string {
+  const bytes = hexToBytes(hex.startsWith("0x") ? hex : `0x${hex}`);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const b64 = typeof btoa === "function" ? btoa(binary) : Buffer.from(binary, "binary").toString("base64");
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /**
@@ -168,7 +235,7 @@ export function publicKeyToAddress(publicKeyPem: string): string {
  *
  * Exposed so the circuit, the prover and the verifier all derive the same
  * statement. The `Sp1` proof system is selectable but the service reports it as
- * unavailable until a prover is configured â€” we never fabricate a "proof".
+ * unavailable until a prover is configured — we never fabricate a "proof".
  */
 export function sp1PublicInputsHash(fields: AuthorizationFields): string {
   return keccak256Hex(

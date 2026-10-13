@@ -294,6 +294,13 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
     if (!pending) throw new HttpError(404, "challenge_not_found", "unknown registration challenge");
     if (pending.status === "consumed") throw new HttpError(409, "challenge_consumed", "challenge already used");
     if (Number(pending.expiresAt) < nowSeconds()) throw new HttpError(410, "challenge_expired", "challenge expired");
+    if (String((pending as { wallet?: unknown }).wallet ?? "").toLowerCase() !== wallet) {
+      throw new HttpError(400, "wallet_mismatch", "challenge is bound to a different wallet");
+    }
+
+    // Burn BEFORE verification so a failed guess cannot be retried and
+    // concurrent requests cannot both pass the pending check (B1).
+    deps.store.update("passkeyChallenges", challengeId, { status: "consumed" } as Partial<StoredRecord>);
 
     const credential = await registerCredential(deps, {
       wallet,
@@ -313,7 +320,6 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
       userHandle: bytesToBase64Url(new TextEncoder().encode(wallet)),
     });
 
-    deps.store.update("passkeyChallenges", challengeId, { status: "consumed" } as Partial<StoredRecord>);
     metrics.assertionsVerified++;
 
     const commitment = deps.webauthnService.commitment(credential);
@@ -355,6 +361,11 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
   }, { raw: true });
 
   app.delete("/v1/wallet/:address/credentials/:credentialId", (ctx: { params: Record<string, string> }) => {
+    const wallet = String(ctx.params.address ?? "").toLowerCase();
+    const existing = deps.webauthnService.get(ctx.params.credentialId);
+    if (!existing || existing.wallet !== wallet) {
+      throw new HttpError(404, "credential_not_found", "unknown credential");
+    }
     const removed = deps.webauthnService.revoke(ctx.params.credentialId);
     if (!removed) throw new HttpError(404, "credential_not_found", "unknown credential");
     logger.info("passkey revoked", { credentialId: ctx.params.credentialId });
@@ -748,6 +759,28 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
       metrics.replaysDetected++;
       throw new HttpError(409, "authorization_replayed", "this authorization has already been used");
     }
+
+    // B21: binding is mandatory, not skippable. Both sides must be present
+    // and equal — an omitted userOpHash must not bypass the check.
+    const userOpHash = String(userOperation.userOpHash ?? "");
+    const authOpHash = String((authorization as { userOpHash?: unknown }).userOpHash ?? "");
+    if (!userOpHash || !authOpHash) {
+      metrics.userOpsRejected++;
+      throw new HttpError(400, "operation_mismatch", "authorization and operation must both carry the operation hash");
+    }
+    if (authOpHash.toLowerCase() !== userOpHash.toLowerCase()) {
+      metrics.userOpsRejected++;
+      throw new HttpError(400, "operation_mismatch", "authorization is bound to a different operation");
+    }
+
+    // B22: the operation sender must be the authorized wallet.
+    const authWallet = String((authorization as { wallet?: unknown }).wallet ?? "").toLowerCase();
+    const opSender = String((userOperation as Record<string, unknown>).sender ?? "").toLowerCase();
+    if (!opSender || opSender !== authWallet) {
+      metrics.userOpsRejected++;
+      throw new HttpError(400, "sender_mismatch", "operation sender does not match the authorized wallet");
+    }
+
     deps.store.put("consumedAuthorizations", {
       id: String(authorization.attestationHash),
       attestationHash: authorization.attestationHash,
@@ -756,12 +789,6 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
       createdAt: nowSeconds(),
       updatedAt: nowSeconds(),
     } as StoredRecord);
-
-    const userOpHash = String(userOperation.userOpHash ?? "");
-    if (authorization.userOpHash !== undefined && userOpHash && authorization.userOpHash !== userOpHash) {
-      metrics.userOpsRejected++;
-      throw new HttpError(400, "operation_mismatch", "authorization is bound to a different operation");
-    }
 
     try {
       const submission = await deps.relayerService.submit({ userOperation: userOperation as Record<string, string> });
@@ -776,6 +803,13 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
         chainId: config.chainId,
       };
     } catch (error) {
+      // B24: transient bundler failure must not brick the authorization —
+      // release it so the client can retry the same signed operation.
+      try {
+        deps.store.delete("consumedAuthorizations", String(authorization.attestationHash));
+      } catch {
+        // best-effort; the replay guard stays on if deletion fails
+      }
       metrics.userOpsRejected++;
       throw error;
     }

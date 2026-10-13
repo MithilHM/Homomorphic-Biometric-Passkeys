@@ -656,12 +656,11 @@ describe("negative authentication paths", () => {
     const live = seededUnitVectorLocal(EMBEDDING_DIMENSION, 4242, 0.02, (k) => Math.sin(k * 0.7 + 1));
     const { body: verified } = await authenticate({ vector: live });
     const { userOp } = buildOperation();
-    let userOpHash = getUserOpHash(userOp, ENTRY_POINT, CHAIN_ID);
+    const authOpHash = String(verified.authorization.userOpHash);
     const payload = {
-      userOperation: fullUserOperationJson(userOp),
+      userOperation: { ...fullUserOperationJson(userOp), userOpHash: authOpHash },
       authorization: verified.authorization,
     };
-    userOpHash = getUserOpHash(userOp, ENTRY_POINT, CHAIN_ID);
 
     const first = await call("POST", "/v1/userop/submit", payload);
     expect(first.status).toBe(200);

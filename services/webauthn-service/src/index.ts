@@ -70,8 +70,13 @@ export class WebAuthnService {
 
   async register(input: RegisterInput): Promise<StoredPasskeyCredential> {
     const existing = this.store.find("credentials", (c) => c.credentialId === input.response.credentialId);
-    if (existing && existing.status === "active") {
-      throw new CredentialError("credential_exists", "this passkey is already registered");
+    if (existing) {
+      if (existing.wallet !== input.wallet.toLowerCase()) {
+        throw new CredentialError("credential_not_owned", "credential belongs to a different wallet");
+      }
+      if (existing.status === "active") {
+        throw new CredentialError("credential_exists", "this passkey is already registered");
+      }
     }
 
     let result;

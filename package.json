@@ -51,5 +51,9 @@
     "typescript": "^5.7.2",
     "viem": "^2.57.4",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0"
   }
 }

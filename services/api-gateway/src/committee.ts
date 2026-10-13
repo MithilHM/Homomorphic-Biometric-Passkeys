@@ -92,7 +92,7 @@ export class DecryptionCommitteeGateway {
     }
 
     const partials: ReturnType<HomomorphicEngine["partialDecrypt"]>[] = [
-      decodePartial(input.coprocessorPartial),
+      decodePartial(input.coprocessorPartial, this.engine.params.ringDimension, BigInt(this.engine.params.modulus)),
       this.engine.partialDecrypt(this.share1, input.productCiphertext),
       this.engine.partialDecrypt(this.share2, input.productCiphertext),
     ];
@@ -114,7 +114,7 @@ export class DecryptionCommitteeGateway {
   }
 }
 
-function decodePartial(encoded: string): bigint[] {
+function decodePartial(encoded: string, n: number, q: bigint): bigint[] {
   const cleaned = encoded.startsWith("0x") ? encoded.slice(2) : encoded;
   if (cleaned.length === 0 || cleaned.length % 16 !== 0) {
     throw new HttpError(400, "invalid_partial", "partial decryption payload is misaligned");
@@ -122,6 +122,10 @@ function decodePartial(encoded: string): bigint[] {
   const out: bigint[] = [];
   for (let i = 0; i < cleaned.length; i += 16) {
     out.push(BigInt(`0x${cleaned.slice(i, i + 16)}`));
+  }
+  if (out.length !== n) throw new HttpError(400, "invalid_partial", "partial decryption has the wrong length");
+  if (out.some((v) => v < 0n || v >= q)) {
+    throw new HttpError(400, "invalid_partial", "partial decryption is out of range");
   }
   return out;
 }
