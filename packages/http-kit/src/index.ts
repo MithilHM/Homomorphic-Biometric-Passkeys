@@ -124,6 +124,13 @@ export interface RateLimitRule {
   windowMs: number;
   /** Optional key extractor; defaults to client IP. */
   key?: (ctx: RequestContext) => string;
+  /** Optional path prefixes this limiter applies to. A limiter without paths
+   *  applies to every request; one with paths is only checked (and only burns
+   *  quota) when the request path starts with one of them. Without this, a
+   *  limiter named "challenge" burns a token on every health check, config
+   *  fetch and static file — tripping 429s for users who issued few
+   *  challenges. */
+  paths?: string[];
 }
 
 interface Bucket {
@@ -183,7 +190,7 @@ const DEFAULT_MAX_BODY = 256 * 1024;
 
 export class HttpApp {
   private readonly routes: RouteDefinition[] = [];
-  private readonly rateLimiters = new Map<string, RateLimiter>();
+  private readonly rateLimiters = new Map<string, { limiter: RateLimiter; rule: RateLimitRule }>();
   private server?: Server;
 
   constructor(private readonly options: ServerOptions) {}
@@ -206,7 +213,7 @@ export class HttpApp {
   }
 
   useRateLimit(name: string, rule: RateLimitRule): this {
-    this.rateLimiters.set(name, new RateLimiter(rule));
+    this.rateLimiters.set(name, { limiter: new RateLimiter(rule), rule });
     return this;
   }
 
@@ -262,9 +269,10 @@ export class HttpApp {
       const match = this.match(request.method ?? "GET", url.pathname);
       if (!match) throw new HttpError(404, "not_found", `No route for ${url.pathname}`);
 
-      for (const [name, limiter] of this.rateLimiters) {
+      for (const [name, entry] of this.rateLimiters) {
         if (name === "__global") continue;
-        const result = limiter.check(limiter["rule"].key?.({ clientIp } as RequestContext) ?? clientIp);
+        if (entry.rule.paths && !entry.rule.paths.some((prefix) => url.pathname.startsWith(prefix))) continue;
+        const result = entry.limiter.check(entry.rule.key?.({ clientIp } as RequestContext) ?? clientIp);
         if (!result.allowed) {
           response.setHeader("retry-after", String(result.retryAfterSeconds));
           throw new HttpError(429, "rate_limited", `Rate limit exceeded for ${name}`);
@@ -306,12 +314,12 @@ export class HttpApp {
   }
 
   private rateLimiter(name: string, rule: RateLimitRule): RateLimiter {
-    let limiter = this.rateLimiters.get(name);
-    if (!limiter) {
-      limiter = new RateLimiter(rule);
-      this.rateLimiters.set(name, limiter);
+    let entry = this.rateLimiters.get(name);
+    if (!entry) {
+      entry = { limiter: new RateLimiter(rule), rule };
+      this.rateLimiters.set(name, entry);
     }
-    return limiter;
+    return entry.limiter;
   }
 
   /**

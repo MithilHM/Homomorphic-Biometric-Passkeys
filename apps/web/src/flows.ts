@@ -168,7 +168,7 @@ export class FlowController {
       });
     } catch (error) {
       this.app.set({ busy: false });
-      const code = (error as { code?: string }).code;
+      const code = errorCode(error);
       if (code === "NotAllowedError") this.app.fail("passkey_cancelled");
       else if (code === "passkey_not_supported") this.app.fail("passkey_not_supported");
       else this.app.fail("proof_error", (error as Error).message);
@@ -201,6 +201,9 @@ export class FlowController {
     this.app.set({ livenessInstruction: session.instruction });
 
     const deadline = Date.now() + 20_000;
+    const reasonCounts = new Map<string, number>();
+    let lastReasons: string[] = [];
+    let lastUiUpdate = 0;
 
     while (Date.now() < deadline && session.capturedSamples.length < ENROLL_SAMPLES) {
       const frame = this.app.camera.capture();
@@ -209,6 +212,10 @@ export class FlowController {
         continue;
       }
       const pushed = session.push(frame);
+      for (const reason of pushed.quality.reasons) {
+        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+      }
+      if (pushed.quality.reasons.length > 0) lastReasons = [...pushed.quality.reasons];
       if (pushed.quality.reasons.includes("multiple_faces")) {
         this.app.set({ busy: false });
         this.app.camera.stop();
@@ -216,10 +223,17 @@ export class FlowController {
         return;
       }
       const count = session.capturedSamples.length;
-      if (count > 0) {
+      // Live viewfinder feedback, throttled: before this fix the overlay showed
+      // a static instruction and the progress bar only appeared after the first
+      // usable sample, so a camera that never produced one looked "stuck on"
+      // for the full 20s with no hint (too dark, too far, no face found).
+      const now = Date.now();
+      if (now - lastUiUpdate > 200) {
+        lastUiUpdate = now;
         this.app.set({
           progress: count / ENROLL_SAMPLES,
           stage: count < ENROLL_SAMPLES ? "face_quality_ok" : "embedding_generated",
+          livenessInstruction: captureFeedback(session.instruction, count, session.liveness.frameCount, lastReasons),
         });
       }
       if (pushed.liveness?.passed && count >= ENROLL_SAMPLES) break;
@@ -229,6 +243,16 @@ export class FlowController {
     this.app.camera.stop();
     this.app.set({ livenessInstruction: undefined, progress: undefined });
 
+    const captured = session.capturedSamples;
+    if (captured.length === 0) {
+      // Zero usable frames: report what was actually observed instead of a
+      // generic liveness failure. "Follow the instruction" is the wrong advice
+      // when the camera never saw a face at all.
+      this.app.set({ busy: false });
+      this.failWithDominantReason(reasonCounts);
+      return;
+    }
+
     const liveness = session.livenessResult ?? session.liveness.finish();
     if (!liveness.passed) {
       this.app.set({ busy: false });
@@ -236,7 +260,6 @@ export class FlowController {
       return;
     }
 
-    const captured = session.capturedSamples;
     if (captured.length < ENROLL_SAMPLES) {
       this.app.set({ busy: false });
       this.app.fail("poor_quality", `only ${captured.length} usable samples were captured`);
@@ -344,7 +367,8 @@ export class FlowController {
       });
 
       const credentials = await fetch(`/v1/wallet/${wallet}/credentials`).then((r) => r.json());
-      const credentialId = credentials.credentials?.[0]?.credentialId;
+      const credential = credentials.credentials?.[0];
+      const credentialId = credential?.credentialId;
       if (!credentialId) {
         this.app.set({ busy: false });
         this.app.fail("passkey_cancelled", "no active passkey");
@@ -359,12 +383,26 @@ export class FlowController {
           credentialId,
         });
       } else {
-        assertion = await getAssertion({
-          rpId: challenge.rpId,
-          challenge: challenge.challenge,
-          credentialId,
-          userVerification: "required",
-        });
+        // One credential: direct allow-list (fastest, routes to its authenticator).
+        // Several (e.g. desktop + phone): discoverable ceremony. An allow-list
+        // pinned to credentials[0] makes every other authenticator answer "no
+        // passkey found" — the phone holds a different credential id than the
+        // desktop one. Ownership of the returned id is enforced server-side.
+        const list = credentials.credentials ?? [];
+        assertion =
+          list.length === 1 && credentialId
+            ? await getAssertion({
+                rpId: challenge.rpId,
+                challenge: challenge.challenge,
+                credentialId,
+                transports: Array.isArray(credential?.transports) ? credential.transports : undefined,
+                userVerification: "required",
+              })
+            : await getAssertion({
+                rpId: challenge.rpId,
+                challenge: challenge.challenge,
+                userVerification: "required",
+              });
       }
 
       // 3. Capture and encrypt the live vector.
@@ -374,13 +412,32 @@ export class FlowController {
       let vector: Float64Array | undefined;
 
       const deadline = Date.now() + 15_000;
+      const reasonCounts = new Map<string, number>();
+      let lastReasons: string[] = [];
+      let lastUiUpdate = 0;
       while (Date.now() < deadline && !vector) {
         const frame = this.app.camera.streaming ? this.app.camera.capture() : undefined;
         if (frame) {
+          const analysis = analyzeFrame(frame, { extractEmbedding: true });
+          for (const reason of analysis.quality.reasons) {
+            reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+          }
+          if (analysis.quality.reasons.length > 0) lastReasons = [...analysis.quality.reasons];
           const result = session.push(frame);
-          if (result?.liveness?.passed) {
-            const analysis = analyzeFrame(frame, { extractEmbedding: true });
-            if (analysis.embedding) vector = analysis.embedding;
+          // The liveness pass may land on a marginal frame with no embedding;
+          // the session remembers the pass, so keep accepting the next usable
+          // frame instead of expiring after the exact passing frame is gone.
+          const passed = result?.liveness?.passed ?? session.livenessResult?.passed ?? false;
+          if (passed && analysis.embedding) vector = analysis.embedding;
+          const now = Date.now();
+          if (now - lastUiUpdate > 300) {
+            lastUiUpdate = now;
+            this.app.set({
+              livenessInstruction:
+                vector || passed
+                  ? session.instruction
+                  : captureFeedback(session.instruction, 0, session.liveness.frameCount, lastReasons),
+            });
           }
         }
         // L6: no synthetic fallback. Without a camera the loop simply expires
@@ -393,7 +450,14 @@ export class FlowController {
 
       if (!vector) {
         this.app.set({ busy: false });
-        this.app.fail("liveness_failed");
+        const liveness = session.livenessResult;
+        if (liveness?.passed) {
+          this.app.fail("poor_quality", "the liveness check passed but no usable face frame was captured");
+        } else if (session.liveness.frameCount === 0) {
+          this.failWithDominantReason(reasonCounts);
+        } else {
+          this.app.fail("liveness_failed", liveness?.failureReason ?? "could not confirm a live interaction");
+        }
         return;
       }
 
@@ -464,7 +528,7 @@ export class FlowController {
       });
     } catch (error) {
       this.app.set({ busy: false });
-      const code = (error as { code?: string }).code;
+      const code = errorCode(error);
       const message = (error as Error).message;
       if (code === "NotAllowedError") this.app.fail("passkey_cancelled");
       else if (code === "challenge_expired") this.app.fail("challenge_expired");
@@ -490,7 +554,7 @@ export class FlowController {
       this.app.fail("proof_error", "a replayed authorization must be rejected — it was not");
     } catch (error) {
       this.app.set({ busy: false });
-      const code = (error as { code?: string }).code;
+      const code = errorCode(error);
       this.app.set({
         notice: {
           kind: "success",
@@ -528,7 +592,7 @@ export class FlowController {
       this.app.fail("proof_error", "a tampered operation must be rejected — it was not");
     } catch (error) {
       this.app.set({ busy: false });
-      const code = (error as { code?: string }).code;
+      const code = errorCode(error);
       this.app.set({
         notice: {
           kind: "success",
@@ -538,6 +602,29 @@ export class FlowController {
               : `Rejected as expected (${code}).`,
         },
       });
+    }
+  }
+
+  /** Report the most common frame-level blocker instead of a generic failure. */
+  private failWithDominantReason(reasonCounts: Map<string, number>): void {
+    let dominant: string | undefined;
+    let best = 0;
+    for (const [reason, count] of reasonCounts) {
+      if (count > best) {
+        best = count;
+        dominant = reason;
+      }
+    }
+    if (dominant === "no_face") {
+      this.app.fail("no_face");
+    } else if (dominant === "low_light") {
+      this.app.fail("low_light");
+    } else if (dominant === "multiple_faces") {
+      this.app.fail("multiple_faces");
+    } else if (dominant) {
+      this.app.fail("poor_quality", `most frames were rejected (${dominant.replaceAll("_", " ")})`);
+    } else {
+      this.app.fail("no_face", "no camera frames were received");
     }
   }
 
@@ -789,6 +876,50 @@ export class FlowController {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Server errors carry a string `code`; DOMExceptions (cancelled/passkey
+ * dialogs) carry a numeric `code` and a string `name`. Normalize so string
+ * methods can never throw inside a catch block and mask the real error —
+ * `startsWith` on a numeric code crashed the handler with `a?.startsWith is
+ * not a function`, surfacing as an uncaught rejection instead of the
+ * passkey-cancelled notice.
+ */
+function errorCode(error: unknown): string {
+  const err = error as { code?: unknown; name?: unknown } | null | undefined;
+  if (typeof err?.code === "string" && err.code.length > 0) return err.code;
+  if (typeof err?.name === "string" && err.name.length > 0) return err.name;
+  return "";
+}
+
+/** Viewfinder line: instruction + live sample/motion progress + current blocker. */
+function captureFeedback(instruction: string, samples: number, motionFrames: number, reasons: string[]): string {
+  const blocker = reasons.length > 0 ? describeReason(reasons[0]) : undefined;
+  if (samples === 0 && motionFrames === 0) {
+    return blocker ? `${instruction} — ${blocker}` : `${instruction} (looking for your face…)`;
+  }
+  const progress = samples > 0 ? ` — ${samples}/${ENROLL_SAMPLES} samples` : " — no usable samples yet";
+  return blocker ? `${instruction}${progress} — ${blocker}` : `${instruction}${progress}`;
+}
+
+function describeReason(reason: string): string | undefined {
+  switch (reason) {
+    case "no_face":
+      return "no face detected yet — move into the frame";
+    case "low_light":
+      return "too dark — add light facing you";
+    case "overexposed":
+      return "too bright — reduce the light behind you";
+    case "blurry":
+      return "image blurry — hold still a moment";
+    case "face_too_small":
+      return "move a little closer to the camera";
+    case "off_center":
+      return "centre your face in the frame";
+    default:
+      return undefined;
+  }
 }
 
 export type { RgbaImage };

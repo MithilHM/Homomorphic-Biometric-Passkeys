@@ -162,10 +162,10 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
     defaultMaxBodyBytes: 256 * 1024,
   });
 
-  app.useRateLimit("challenge", { limit: limits.challenge ?? 30, windowMs: 60_000 });
-  app.useRateLimit("verify", { limit: limits.verify ?? 20, windowMs: 60_000 });
-  app.useRateLimit("passkey", { limit: limits.passkey ?? 30, windowMs: 60_000 });
-  app.useRateLimit("submit", { limit: limits.submit ?? 30, windowMs: 60_000 });
+  app.useRateLimit("challenge", { limit: limits.challenge ?? 30, windowMs: 60_000, paths: ["/v1/auth/challenge"] });
+  app.useRateLimit("verify", { limit: limits.verify ?? 20, windowMs: 60_000, paths: ["/v1/auth/verify"] });
+  app.useRateLimit("passkey", { limit: limits.passkey ?? 30, windowMs: 60_000, paths: ["/v1/auth/passkey"] });
+  app.useRateLimit("submit", { limit: limits.submit ?? 30, windowMs: 60_000, paths: ["/v1/userop/submit"] });
 
   /* ------------------------------ health ------------------------------- */
 
@@ -355,6 +355,8 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
         userVerified: c.userVerified,
         backupEligible: c.backupEligible,
         backupState: c.backupState,
+        transports: c.transports ?? [],
+        aaguid: (c as unknown as { aaguid?: string }).aaguid ?? null,
         publicKeyFingerprint: (c as unknown as { publicKeyFingerprint: string }).publicKeyFingerprint,
       })),
     };

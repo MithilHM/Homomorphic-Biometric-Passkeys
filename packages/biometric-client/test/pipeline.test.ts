@@ -264,6 +264,29 @@ describe("liveness", () => {
     const result = session.liveness.finish();
     expect(result.observations.blinkCount).toBeGreaterThanOrEqual(2);
   });
+
+  it("tracks motion from frames that fail embedding quality", () => {
+    // A far-away face is detected but rejected as a sample (face_too_small);
+    // the head turn it performs must still count toward the challenge.
+    // Otherwise the exact frames that perform the motion are excluded from
+    // it and enrollment stalls with zero feedback.
+    const session = new BiometricCaptureSession({ allow: ["turn_left"] });
+    for (let i = 0; i < 10; i++) {
+      const pushed = session.push(syntheticFace({ centerX: 110 + i * 8, radius: 28 }));
+      expect(pushed.quality.acceptable).toBe(false);
+    }
+    expect(session.capturedSamples.length).toBe(0);
+    expect(session.liveness.frameCount).toBeGreaterThan(0);
+    expect(session.liveness.finish().passed).toBe(true);
+  });
+
+  it("ignores frames with no detectable face for liveness", () => {
+    const session = new BiometricCaptureSession({ allow: ["turn_left"] });
+    const empty: RgbaImage = { width: 160, height: 120, data: new Uint8ClampedArray(160 * 120 * 4).fill(10) };
+    for (let i = 0; i < 10; i++) session.push(empty);
+    expect(session.liveness.frameCount).toBe(0);
+    expect(session.liveness.finish().passed).toBe(false);
+  });
 });
 
 describe("frame analysis", () => {

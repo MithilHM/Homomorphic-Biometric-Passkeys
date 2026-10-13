@@ -46,6 +46,7 @@ if (!bootstrapped) {
   const { publicKey } = coprocessor.bootstrap({
     proof: path.join(DATA_DIR, "committee", "share-1-proof.json"),
     custody: path.join(DATA_DIR, "committee", "share-2-custody.json"),
+    local: localSharePath,
   });
   // Persist the public bundle plus this process's own share so a restart can
   // resume without regenerating keys (templates are encrypted under them).

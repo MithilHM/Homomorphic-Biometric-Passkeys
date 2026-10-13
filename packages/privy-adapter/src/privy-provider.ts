@@ -61,7 +61,11 @@ export class PrivyPasskeyProvider implements PasskeyProvider {
   setAppId(appId: string): void {
     this.config.appId = appId;
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem("homobio.privy_app_id", appId);
+      try {
+        localStorage.setItem("homobio.privy_app_id", appId);
+      } catch {
+        // storage unavailable (e.g. Node test env) — config still applies
+      }
     }
   }
 
@@ -272,7 +276,11 @@ export class PrivyPasskeyProvider implements PasskeyProvider {
   logout(): void {
     this.currentUser = null;
     if (typeof localStorage !== "undefined") {
-      localStorage.removeItem("homobio.privy_user");
+      try {
+        localStorage.removeItem("homobio.privy_user");
+      } catch {
+        // storage unavailable — in-memory session is already cleared
+      }
     }
   }
 }

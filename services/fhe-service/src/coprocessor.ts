@@ -82,7 +82,7 @@ export class FheCoprocessor {
    * Neither is readable by this process after generation, which is what makes
    * the coprocessor unable to decrypt on its own.
    */
-  bootstrap(sharePaths: { proof: string; custody: string }): { publicKey: PublicKeyBundle; fingerprint: string } {
+  bootstrap(sharePaths: { proof: string; custody: string; local?: string }): { publicKey: PublicKeyBundle; fingerprint: string } {
     if (this.keySet) return { publicKey: this.keySet.publicKey, fingerprint: this.keySet.publicKey.fingerprint };
 
     const keySet = this.engine.generateKeySet(3, 1);
@@ -98,6 +98,13 @@ export class FheCoprocessor {
 
     write(sharePaths.proof, keySet.shares[1]);
     write(sharePaths.custody, keySet.shares[2]);
+    // Share 0 must also survive a restart: without it `load()` can never
+    // resume this key set and every reboot orphans all enrolled templates.
+    // Callers without a persistence path (tests) keep share 0 in memory only.
+    if (sharePaths.local) {
+      mkdirSync(path.dirname(sharePaths.local), { recursive: true });
+      write(sharePaths.local, keySet.shares[0]);
+    }
 
     this.shares.set("fhe", keySet.shares[0]);
     this.keySet = keySet;

@@ -26,6 +26,25 @@ export function isPlatformAuthenticatorAvailable(): Promise<boolean> {
   return globalThis.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable?.() ?? Promise.resolve(false);
 }
 
+/** Browser self-report for the diagnostics panel: can this browser do a
+ *  UV-capable platform ceremony (Windows Hello, Touch ID, …) right now? */
+export async function getPlatformAuthInfo(): Promise<{
+  webauthn: boolean;
+  platformUv: boolean;
+  conditionalMediation: boolean;
+}> {
+  const webauthn = isWebAuthnSupported();
+  const [platformUv, conditionalMediation] = await Promise.all([
+    webauthn && typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
+      ? PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+      : Promise.resolve(false),
+    webauthn && typeof PublicKeyCredential.isConditionalMediationAvailable === "function"
+      ? PublicKeyCredential.isConditionalMediationAvailable()
+      : Promise.resolve(false),
+  ]);
+  return { webauthn, platformUv, conditionalMediation };
+}
+
 export function generateChallenge(byteLength = 32): Uint8Array {
   return randomBytes(byteLength);
 }
@@ -95,6 +114,10 @@ export interface AssertionRequestOptions {
   challenge: string;
   /** Omit to use a discoverable credential instead of an allow-list. */
   credentialId?: string;
+  /** Transports recorded at registration. Passing them routes the request to
+   *  the right authenticator (e.g. `internal` → the platform prompt) instead
+   *  of the generic OS picker, which may not offer the local option at all. */
+  transports?: string[];
   userVerification?: UserVerificationRequirement;
   timeoutMs?: number;
 }
@@ -119,7 +142,11 @@ export async function getAssertion(options: AssertionRequestOptions): Promise<As
   };
   if (options.credentialId) {
     publicKey.allowCredentials = [
-      { type: "public-key", id: bufferSource(base64UrlToBytes(options.credentialId)) },
+      {
+        type: "public-key",
+        id: bufferSource(base64UrlToBytes(options.credentialId)),
+        transports: filterTransports(options.transports),
+      },
     ];
   }
 
@@ -136,6 +163,16 @@ export async function getAssertion(options: AssertionRequestOptions): Promise<As
   };
 }
 
+/**
+ * Keep only spec-defined transports: one unknown string makes the whole
+ * `credentials.get()` call throw a `TypeError` in the browser.
+ */
+function filterTransports(transports?: string[]): AuthenticatorTransport[] | undefined {
+  if (!transports || transports.length === 0) return undefined;
+  const known: AuthenticatorTransport[] = ["usb", "nfc", "ble", "hybrid", "internal"];
+  const filtered = transports.filter((t): t is AuthenticatorTransport => known.includes(t as AuthenticatorTransport));
+  return filtered.length > 0 ? filtered : undefined;
+}
 /**
  * The challenge the browser must sign.
  *

@@ -10,6 +10,12 @@ import type { RgbaImage } from "@homobio/biometric-client";
 
 export class CameraController {
   private stream?: MediaStream;
+  /** Offscreen sink owned by the controller: capture must not depend on the
+   *  preview element existing. Enrollment runs on the onboard tab, which used
+   *  to render no `<video id="camera-preview">` at all — the stream was
+   *  acquired (camera light on) but `capture()` returned `undefined` for the
+   *  full 20s because it read frames from a DOM node that was never there. */
+  private video?: HTMLVideoElement;
   private canvas?: HTMLCanvasElement;
   private context?: CanvasRenderingContext2D;
 
@@ -38,10 +44,19 @@ export class CameraController {
       audio: false,
     });
 
-    const video = document.getElementById("camera-preview") as HTMLVideoElement | null;
-    if (video) {
-      video.srcObject = this.stream;
-      await video.play().catch(() => undefined);
+    // Controller-owned sink: always present, regardless of which tab is shown.
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = this.stream;
+    await video.play().catch(() => undefined);
+    this.video = video;
+
+    // Mirror into the visible preview when one is rendered.
+    const preview = document.getElementById("camera-preview") as HTMLVideoElement | null;
+    if (preview && preview !== video) {
+      preview.srcObject = this.stream;
+      await preview.play().catch(() => undefined);
     }
 
     this.canvas = document.createElement("canvas");
@@ -53,8 +68,13 @@ export class CameraController {
   stop(): void {
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = undefined;
-    const video = document.getElementById("camera-preview") as HTMLVideoElement | null;
-    if (video) video.srcObject = null;
+    if (this.video) {
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video = undefined;
+    }
+    const preview = document.getElementById("camera-preview") as HTMLVideoElement | null;
+    if (preview) preview.srcObject = null;
     // Release the backing store so no frame data survives the session.
     this.canvas = undefined;
     this.context = undefined;
@@ -62,7 +82,7 @@ export class CameraController {
 
   /** Grab one frame. Returns `undefined` when the camera is not running. */
   capture(): RgbaImage | undefined {
-    const video = document.getElementById("camera-preview") as HTMLVideoElement | null;
+    const video = this.video;
     if (!video || !this.canvas || !this.context || video.readyState < 2) return undefined;
 
     this.context.drawImage(video, 0, 0, this.canvas.width, this.canvas.height);

@@ -155,6 +155,20 @@ export class BiometricCaptureSession {
       if (result) this.lastResult = result;
       return { quality: analysis.quality, liveness: result };
     }
+    // Motion tracking must not depend on embedding quality. A head turn
+    // performed while backlit, far away, or slightly blurred still moves the
+    // face box — but the frame is useless as a template sample. Feed the
+    // liveness observation whenever a face is detectable so the challenge
+    // measures motion, not exposure; sample collection stays gated above.
+    // Without this, the exact frames that perform the challenge are the ones
+    // excluded from it, and enrollment stalls with no usable feedback.
+    const face = detectFaces(image).faces[0];
+    if (face) {
+      const luminance = eyeRegionLuminance(image.data, image.width, image.height, face);
+      const result = this.liveness.push({ box: face, eyeRegionLuminance: luminance, timestamp: Date.now() });
+      if (result) this.lastResult = result;
+      return { quality: analysis.quality, liveness: result };
+    }
     return { quality: analysis.quality };
   }
 }
