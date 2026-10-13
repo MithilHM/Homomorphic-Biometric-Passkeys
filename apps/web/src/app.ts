@@ -221,7 +221,7 @@ export class App {
             { tag: "li", children: "Camera frames stay on this device and are discarded after each capture." },
             { tag: "li", children: "Your face is turned into a numeric vector locally, then encrypted before upload." },
             { tag: "li", children: "The backend compares encrypted vectors and never receives the plaintext." },
-            { tag: "li", children: "Your passkey â€” not your face â€” is the cryptographic key to the wallet." },
+            { tag: "li", children: "Your passkey — not your face — is the cryptographic key to the wallet." },
             { tag: "li", children: "A decision needs your face, your passkey and the exact transaction, all together." },
           ],
         },
@@ -254,7 +254,7 @@ export class App {
                   tag: "input",
                   id: "wallet",
                   value: this.state.wallet,
-                  placeholder: "0xâ€¦",
+                  placeholder: "0x…",
                   spellcheck: false,
                   onInput: (value: string) => {
                     this.state.wallet = value.trim();
@@ -269,7 +269,7 @@ export class App {
                 {
                   tag: "button",
                   className: "primary",
-                  text: this.state.busy ? "Workingâ€¦" : "Create passkey",
+                  text: this.state.busy ? "Working…" : "Create passkey",
                   disabled: this.state.busy || !isWebAuthnSupported(),
                   onClick: () => void this.flows.registerPasskey(),
                 },
@@ -311,7 +311,7 @@ export class App {
                   className: "kv",
                   children: devices.flatMap((device: any) => [
                     { tag: "dt", children: device.label },
-                    { tag: "dd", children: `${device.role} Â· ${short(device.credentialId)} Â· used ${timeAgo(device.lastUsedAt)}` },
+                    { tag: "dd", children: `${device.role} · ${short(device.credentialId)} · used ${timeAgo(device.lastUsedAt)}` },
                   ]),
                 },
           ],
@@ -332,7 +332,7 @@ export class App {
                   className: "kv",
                   children: [
                     { tag: "dt", children: "Status" },
-                    { tag: "dd", children: `enrolled Â· v${account.biometric.templateVersion}` },
+                    { tag: "dd", children: `enrolled · v${account.biometric.templateVersion}` },
                     { tag: "dt", children: "Model" },
                     { tag: "dd", children: account.biometric.modelVersion },
                     { tag: "dt", children: "FHE key version" },
@@ -368,7 +368,7 @@ export class App {
               ? {
                   tag: "p",
                   className: "hint",
-                  children: "Register a passkey first â€” recovery must exist before a biometric template is created.",
+                  children: "Register a passkey first — recovery must exist before a biometric template is created.",
                 }
               : null,
           ],
@@ -409,7 +409,7 @@ export class App {
                 {
                   tag: "button",
                   className: "primary",
-                  text: this.state.busy ? "Workingâ€¦" : "Authenticate and submit",
+                  text: this.state.busy ? "Working…" : "Authenticate and submit",
                   disabled: this.state.busy || !this.state.wallet,
                   onClick: () => void this.flows.authenticate(),
                 },
@@ -527,7 +527,7 @@ export class App {
                   tag: "dt",
                   children: "Locked until",
                 },
-                { tag: "dd", children: account.lockedUntil ? new Date(account.lockedUntil * 1000).toLocaleString() : "â€”" },
+                { tag: "dd", children: account.lockedUntil ? new Date(account.lockedUntil * 1000).toLocaleString() : "—" },
               ],
             },
           ],
@@ -781,23 +781,23 @@ export class App {
                 { tag: "dt", children: "FHE engine" },
                 { tag: "dd", children: config.fhe.engine ?? "unavailable" },
                 { tag: "dt", children: "Ring dimension" },
-                { tag: "dd", children: String(config.fhe.ringDimension ?? "â€”") },
+                { tag: "dd", children: String(config.fhe.ringDimension ?? "—") },
                 { tag: "dt", children: "Modulus" },
-                { tag: "dd", children: String(config.fhe.modulus ?? "â€”") },
+                { tag: "dd", children: String(config.fhe.modulus ?? "—") },
                 { tag: "dt", children: "Fixed-point scale" },
-                { tag: "dd", children: `2^${config.fhe.scaleBits ?? "â€”"}` },
+                { tag: "dd", children: `2^${config.fhe.scaleBits ?? "—"}` },
                 { tag: "dt", children: "Embedding dimension" },
                 { tag: "dd", children: String(config.model.embeddingDimension) },
                 { tag: "dt", children: "Model version" },
                 { tag: "dd", children: config.model.modelVersion },
                 { tag: "dt", children: "Key fingerprint" },
-                { tag: "dd", children: String(config.fhe.fingerprint ?? "â€”") },
+                { tag: "dd", children: String(config.fhe.fingerprint ?? "—") },
                 { tag: "dt", children: "Error bound" },
-                { tag: "dd", children: String(config.fhe.errorBound ?? "â€”") },
+                { tag: "dd", children: String(config.fhe.errorBound ?? "—") },
                 { tag: "dt", children: "Decision program" },
                 { tag: "dd", children: short(config.decisionProgramHash) },
                 { tag: "dt", children: "Attestation committee" },
-                { tag: "dd", children: config.committeeAddress ?? "â€”" },
+                { tag: "dd", children: config.committeeAddress ?? "—" },
               ],
             }
           : { tag: "p", className: "hint", children: "Gateway configuration is not loaded yet." },
@@ -827,7 +827,7 @@ export class App {
               tag: "li",
               dataset: { state },
               children: [
-                { tag: "span", className: "mark", children: state === "done" ? "âœ“" : state === "active" ? "â–¸" : "Â·" },
+                { tag: "span", className: "mark", children: state === "done" ? "✓" : state === "active" ? "▸" : "·" },
                 { tag: "span", children: entry.label },
               ],
             };
@@ -917,8 +917,8 @@ export class App {
 /* -------------------------------------------------------------------------- */
 
 function short(value: string): string {
-  if (!value) return "â€”";
-  return value.length > 18 ? `${value.slice(0, 10)}â€¦${value.slice(-6)}` : value;
+  if (!value) return "—";
+  return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
 }
 
 function stateBadge(state: string): VNode {

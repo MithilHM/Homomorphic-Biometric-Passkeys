@@ -46,10 +46,12 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
   return (
     <span
       className={cn(
+        // Solid backgrounds: these often sit over the busy hero dither, and
+        // anything translucent lets dots collide with glyphs.
         "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] font-medium tracking-wide",
-        tone === "green" && "border-accent/40 bg-accent/10 text-accent-bright",
-        tone === "red" && "border-destructive/40 bg-destructive/10 text-destructive",
-        tone === "neutral" && "border-border bg-muted/60 text-muted-foreground",
+        tone === "green" && "border-accent/50 bg-[#0c2317] text-accent-bright",
+        tone === "red" && "border-destructive/50 bg-[#2a1113] text-destructive",
+        tone === "neutral" && "border-border bg-muted text-foreground",
       )}
     >
       {children}

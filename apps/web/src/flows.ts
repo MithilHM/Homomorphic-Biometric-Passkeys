@@ -274,7 +274,7 @@ export class FlowController {
         stage: "success",
         notice: {
           kind: "success",
-          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}â€¦ Your plaintext face never left this device.`,
+          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}… Your plaintext face never left this device.`,
         },
       });
     } catch (error) {
@@ -459,7 +459,7 @@ export class FlowController {
         session: { ...verified, userOpHash },
         notice: {
           kind: "success",
-          text: `Authorized ${userOpHash.slice(0, 12)}â€¦ â€” threshold ${verified.decision.thresholdBps / 1e4}, status ${submitted.status}. The passkey signature is bound to this exact operation.`,
+          text: `Authorized ${userOpHash.slice(0, 12)}… — threshold ${verified.decision.thresholdBps / 1e4}, status ${submitted.status}. The passkey signature is bound to this exact operation.`,
         },
       });
     } catch (error) {
@@ -487,7 +487,7 @@ export class FlowController {
         authorization: this.app.state.session.authorization,
       });
       this.app.set({ busy: false });
-      this.app.fail("proof_error", "a replayed authorization must be rejected â€” it was not");
+      this.app.fail("proof_error", "a replayed authorization must be rejected — it was not");
     } catch (error) {
       this.app.set({ busy: false });
       const code = (error as { code?: string }).code;
@@ -525,7 +525,7 @@ export class FlowController {
         authorization: session.authorization,
       });
       this.app.set({ busy: false });
-      this.app.fail("proof_error", "a tampered operation must be rejected â€” it was not");
+      this.app.fail("proof_error", "a tampered operation must be rejected — it was not");
     } catch (error) {
       this.app.set({ busy: false });
       const code = (error as { code?: string }).code;

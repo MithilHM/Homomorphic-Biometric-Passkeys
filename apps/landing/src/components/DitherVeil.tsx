@@ -65,7 +65,9 @@ export default function DitherVeil({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({
     pointer: null as { x: number; y: number; inside: boolean } | null,
+    smooth: null as { x: number; y: number } | null,
     dither: null as HTMLCanvasElement | null,
+    invert: null as HTMLCanvasElement | null,
     full: null as HTMLCanvasElement | null,
     mask: null as HTMLCanvasElement | null,
     cut: null as HTMLCanvasElement | null,
@@ -191,12 +193,13 @@ export default function DitherVeil({
       const dither = document.createElement("canvas");
       dither.width = w;
       dither.height = h;
-      const dctx = dither.getContext("2d");
-      if (dctx) {
+      const paint = (target: HTMLCanvasElement, fg: string, bg: string) => {
+        const dctx = target.getContext("2d");
+        if (!dctx) return;
         dctx.imageSmoothingEnabled = false;
-        dctx.fillStyle = o.paperColor;
+        dctx.fillStyle = bg;
         dctx.fillRect(0, 0, w, h);
-        dctx.fillStyle = o.inkColor;
+        dctx.fillStyle = fg;
         const cw = w / cols;
         const ch = h / rows;
         for (let y = 0; y < rows; y++) {
@@ -204,8 +207,17 @@ export default function DitherVeil({
             if (ink[y * cols + x] === 1) dctx.fillRect(Math.floor(x * cw), Math.floor(y * ch), Math.ceil(cw), Math.ceil(ch));
           }
         }
-      }
+      };
+      paint(dither, o.inkColor, o.paperColor);
       st.dither = dither;
+
+      // Pre-rendered inverse: hovering swaps tones around the cursor, so the
+      // background visibly reacts to the pointer — not just reveals.
+      const invert = document.createElement("canvas");
+      invert.width = w;
+      invert.height = h;
+      paint(invert, o.paperColor, o.inkColor);
+      st.invert = invert;
 
       const mask = document.createElement("canvas");
       mask.width = w;
@@ -242,10 +254,22 @@ export default function DitherVeil({
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       const o = optsRef.current;
-      const { dither, full, mask, cut } = st;
-      if (!dither || !full || !mask || !cut) return;
+      const { dither, invert, full, mask, cut } = st;
+      if (!dither || !invert || !full || !mask || !cut) return;
       const mctx = mask.getContext("2d");
       if (!mctx) return;
+
+      // Eased cursor: the reaction trails the pointer slightly, which reads
+      // as alive rather than glued on.
+      const p = st.pointer;
+      if (p && p.inside) {
+        st.smooth = st.smooth ?? { x: p.x, y: p.y };
+        const k = reducedMotion ? 1 : 1 - Math.pow(0.001, dt);
+        st.smooth.x += (p.x - st.smooth.x) * k;
+        st.smooth.y += (p.y - st.smooth.y) * k;
+      } else {
+        st.smooth = null;
+      }
 
       // Fade the trail. linger<=0 (or reduced motion) clears every frame.
       const linger = reducedMotion ? 0 : clamp(o.linger, 0, 10);
@@ -260,6 +284,32 @@ export default function DitherVeil({
       stamp(mctx);
 
       ctx.drawImage(dither, 0, 0);
+
+      // Hover reaction: inverted tones in a soft disc around the eased
+      // cursor. Skipped under reduced motion (static dither + reveal only).
+      if (st.smooth && !reducedMotion) {
+        const r = clamp(o.revealRadius, 8, 1200) * 0.75 * st.scale;
+        const x = st.smooth.x * st.scale;
+        const y = st.smooth.y * st.scale;
+        const soft = clamp(o.softness, 0, 1);
+        const cctx = cut.getContext("2d");
+        if (cctx) {
+          cctx.globalCompositeOperation = "source-over";
+          cctx.clearRect(0, 0, st.w, st.h);
+          cctx.drawImage(invert, 0, 0);
+          cctx.globalCompositeOperation = "destination-in";
+          const g = cctx.createRadialGradient(x, y, 0, x, y, r);
+          g.addColorStop(0, "rgba(255,255,255,0.9)");
+          g.addColorStop(clamp(1 - soft, 0.02, 0.98), "rgba(255,255,255,0.75)");
+          g.addColorStop(1, "rgba(255,255,255,0)");
+          cctx.fillStyle = g;
+          cctx.beginPath();
+          cctx.arc(x, y, r, 0, Math.PI * 2);
+          cctx.fill();
+          ctx.drawImage(cut, 0, 0);
+        }
+      }
+
       // Reveal = full image clipped by the accumulated mask (scratch reused).
       const cctx = cut.getContext("2d");
       if (!cctx) return;
@@ -290,6 +340,12 @@ export default function DitherVeil({
     const onLeave = () => {
       st.pointer = null;
     };
+    // Track the parent section, not just the canvas box: the copy overlay
+    // sits above the veil, and hovering it must still drive the reaction.
+    const track = container.parentElement ?? container;
+    track.addEventListener("pointermove", onMove);
+    track.addEventListener("pointerdown", onMove);
+    track.addEventListener("pointerleave", onLeave);
 
     const io = new IntersectionObserver((entries) => {
       if (entries[0]?.isIntersecting) start();
@@ -301,9 +357,6 @@ export default function DitherVeil({
       else start();
     };
     document.addEventListener("visibilitychange", onVis);
-    container.addEventListener("pointermove", onMove);
-    container.addEventListener("pointerdown", onMove);
-    container.addEventListener("pointerleave", onLeave);
 
     let ro: ResizeObserver | null = null;
     const img = new Image();
@@ -331,9 +384,9 @@ export default function DitherVeil({
       io.disconnect();
       ro?.disconnect();
       document.removeEventListener("visibilitychange", onVis);
-      container.removeEventListener("pointermove", onMove);
-      container.removeEventListener("pointerdown", onMove);
-      container.removeEventListener("pointerleave", onLeave);
+      track.removeEventListener("pointermove", onMove);
+      track.removeEventListener("pointerdown", onMove);
+      track.removeEventListener("pointerleave", onLeave);
     };
     // Rebuild the diffused layers only when the source or look changes;
     // pointer motion never rebuilds (it only stamps the mask).

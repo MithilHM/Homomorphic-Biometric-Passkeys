@@ -151,5 +151,5 @@ export function intentChallengeDescription(input: {
   policyHash: string;
   expiresAt: number;
 }): string {
-  return `Authorize ${input.wallet} on chain ${input.chainId} for operation ${input.operationHash.slice(0, 10)}â€¦ (session ${input.sessionId.slice(0, 8)}, expires ${new Date(input.expiresAt * 1000).toISOString()})`;
+  return `Authorize ${input.wallet} on chain ${input.chainId} for operation ${input.operationHash.slice(0, 10)}… (session ${input.sessionId.slice(0, 8)}, expires ${new Date(input.expiresAt * 1000).toISOString()})`;
 }

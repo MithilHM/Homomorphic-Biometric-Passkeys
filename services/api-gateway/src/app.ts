@@ -998,7 +998,7 @@ async function registerCredential(deps: GatewayDeps, input: Parameters<WebAuthnS
 }
 
 function describeIntent(wallet: string, chainId: number, operationHash: string, expiresAt: number): string {
-  return `Authorize ${wallet} on chain ${chainId} for operation ${operationHash.slice(0, 10)}Ã¢â‚¬Â¦ (expires ${new Date(
+  return `Authorize ${wallet} on chain ${chainId} for operation ${operationHash.slice(0, 10)}… (expires ${new Date(
     expiresAt * 1000,
   ).toISOString()})`;
 }

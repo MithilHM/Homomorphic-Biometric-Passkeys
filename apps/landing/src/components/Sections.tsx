@@ -91,10 +91,11 @@ export function Hero() {
         alt="Portrait dissolving into pixels — move your pointer to reveal it"
         className="h-[94svh] min-h-[620px]"
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/70 via-transparent to-background" aria-hidden />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/85 via-background/25 to-background" aria-hidden />
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-full bg-gradient-to-r from-background/70 via-transparent to-transparent sm:w-3/4" aria-hidden />
       <div className="absolute inset-0 mx-auto flex max-w-6xl flex-col justify-end px-5 pb-16">
-        <div className="pointer-events-auto flex max-w-3xl flex-col gap-5">
-          <div className="flex flex-wrap gap-2">
+        <div className="pointer-events-auto flex max-w-3xl flex-col gap-5 [text-shadow:0_2px_28px_rgb(0_0_0/0.85),0_1px_4px_rgb(0_0_0/0.9)]">
+          <div className="flex flex-wrap gap-2 [text-shadow:none]">
             <Badge tone="green">No seed phrases</Badge>
             <Badge tone="green">Face unlock</Badge>
             <Badge tone="neutral">You hold the keys</Badge>
@@ -103,19 +104,23 @@ export function Hero() {
             Your face unlocks your wallet.
             <span className="text-accent-bright"> Nobody sees your face.</span>
           </h1>
-          <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+          <p className="max-w-xl text-base leading-relaxed text-slate-200 sm:text-lg">
             A crypto wallet that opens with a look instead of a written-down secret. Your face is checked on
             your own device, and the service that verifies you never receives anything it could recognize.
           </p>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 [text-shadow:none]">
             <Button size="lg" onClick={() => document.querySelector("#stack")?.scrollIntoView({ behavior: "smooth" })}>
               Check the live service <ArrowRight size={17} aria-hidden />
             </Button>
-            <Button size="lg" variant="outline" onClick={() => window.open(doc("docs/architecture.md"), "_blank", "noopener")}>
+            <Button size="lg" variant="outline" className="bg-background/50 backdrop-blur-sm" onClick={() => window.open(doc("docs/architecture.md"), "_blank", "noopener")}>
               How it works
             </Button>
           </div>
-          <p className="font-mono text-xs text-muted-foreground">Move your pointer — look closely, then it fades back.</p>
+          <p>
+            <span className="inline-block rounded-md bg-background/80 px-2.5 py-1.5 font-mono text-xs text-slate-300 backdrop-blur-sm">
+              Move your pointer — the portrait inverts and reveals under it.
+            </span>
+          </p>
         </div>
       </div>
     </section>

@@ -1,9 +1,9 @@
 /**
  * Offline demo of the negative paths (PRD section 62, demos C-F).
  *
- * This runs the REAL cryptographic pipeline in-process â€” real RLWE encryption,
+ * This runs the REAL cryptographic pipeline in-process — real RLWE encryption,
  * real homomorphic comparison, real threshold decryption, real attestation
- * signatures â€” with a software authenticator standing in for the browser's
+ * signatures — with a software authenticator standing in for the browser's
  * passkey. It needs no gateway, no camera and no chain, which makes it the
  * artefact to run in CI when proving that wrong faces, tampered transactions,
  * replays and recovery all fail.
@@ -61,7 +61,7 @@ interface Outcome {
 }
 
 export async function runDemo(): Promise<boolean> {
-  console.log(bold("\nHomomorphic Biometric Passkeys â€” negative-path demo\n"));
+  console.log(bold("\nHomomorphic Biometric Passkeys — negative-path demo\n"));
 
   const engine = new HomomorphicEngine();
   const keys = engine.generateKeySet(3, 1);
@@ -131,18 +131,18 @@ export async function runDemo(): Promise<boolean> {
   const outcomes: Outcome[] = [];
 
   /* ---------------------------- Demo C: wrong face ---------------------- */
-  console.log(bold("Demo C â€” a different person cannot authorize"));
+  console.log(bold("Demo C — a different person cannot authorize"));
   const impostor = seededUnitVectorLocal(EMBEDDING_DIMENSION, 99991, 1, (i) => Math.cos(i * 1.3));
   const wrongFace = await authenticate(impostor, "impostor capture");
   outcomes.push({
-    name: "Demo C Â· wrong face is rejected",
+    name: "Demo C · wrong face is rejected",
     expected: "reject",
     actual: wrongFace,
     detail: "the coprocessor compared ciphertexts only; the plaintext distance never existed",
   });
 
   /* ------------------------- Control: genuine capture -------------------- */
-  console.log(bold("\nControl â€” the enrolled user is accepted"));
+  console.log(bold("\nControl — the enrolled user is accepted"));
   const genuine = seededUnitVectorLocal(
     EMBEDDING_DIMENSION,
     4242,
@@ -151,14 +151,14 @@ export async function runDemo(): Promise<boolean> {
   );
   const genuineResult = await authenticate(genuine, "genuine capture");
   outcomes.push({
-    name: "Control Â· genuine capture is accepted",
+    name: "Control · genuine capture is accepted",
     expected: "accept",
     actual: genuineResult,
     detail: "same pipeline, same threshold, correct person",
   });
 
   /* ---------------------- Demo D: tampered transaction ------------------- */
-  console.log(bold("\nDemo D â€” a valid authorization cannot be moved to another transaction"));
+  console.log(bold("\nDemo D — a valid authorization cannot be moved to another transaction"));
   const query = engine.encryptVector(keys.publicKey, genuine, EMBEDDING_DIMENSION, "low");
   const product = engine.evaluateProduct(templateCt, query);
   const decrypted = committee.decrypt(engine, product, 2 ** -9);
@@ -186,44 +186,44 @@ export async function runDemo(): Promise<boolean> {
 
   const tamperRejected = authorization.userOpHash !== tamperedHash;
   outcomes.push({
-    name: "Demo D Â· recipient change invalidates the authorization",
+    name: "Demo D · recipient change invalidates the authorization",
     expected: "reject",
     actual: tamperRejected ? "reject" : "accept",
-    detail: `authorization binds userOpHash ${authorization.userOpHash.slice(0, 12)}â€¦, tampered op hashes to ${tamperedHash.slice(0, 12)}â€¦`,
+    detail: `authorization binds userOpHash ${authorization.userOpHash.slice(0, 12)}…, tampered op hashes to ${tamperedHash.slice(0, 12)}…`,
   });
 
   /* --------------------------- Demo E: replay --------------------------- */
-  console.log(bold("\nDemo E â€” an authorization is single-use"));
+  console.log(bold("\nDemo E — an authorization is single-use"));
   const replayed = proof.verify(authorization, proof.committeeKey());
   const replayStore = new Set<string>();
   const firstUse = replayStore.has(authorization.attestationHash);
   replayStore.add(authorization.attestationHash);
   const secondUse = replayStore.has(authorization.attestationHash);
   outcomes.push({
-    name: "Demo E Â· replayed authorization is rejected",
+    name: "Demo E · replayed authorization is rejected",
     expected: "reject",
     actual: secondUse ? "reject" : "accept",
     detail: `signature is valid (${replayed}) but the session id ${authorization.sessionId} was already consumed (first=${firstUse}, second=${secondUse})`,
   });
 
   /* -------------------------- Demo F: recovery -------------------------- */
-  console.log(bold("\nDemo F â€” recovery is timelocked"));
+  console.log(bold("\nDemo F — recovery is timelocked"));
   const delay = POLICY.recoveryDelaySeconds;
   const immediateTakeover = delay < 48 * 3600;
   outcomes.push({
-    name: "Demo F Â· recovery cannot take over instantly",
+    name: "Demo F · recovery cannot take over instantly",
     expected: "reject",
     actual: immediateTakeover ? "accept" : "reject",
     detail: `recovery delay is ${delay / 3600}h; the account refuses to validate operations while a request is pending`,
   });
 
   /* ---------------------- extra: committee isolation -------------------- */
-  console.log(bold("\nExtra â€” the coprocessor alone cannot decrypt"));
+  console.log(bold("\nExtra — the coprocessor alone cannot decrypt"));
   const singleShare = engine.partialDecrypt(keys.shares[0], product);
   const leaked = Number(engine.ring.toSigned(singleShare[0])) / Math.pow(2, 2 * engine.params.scaleBits);
   const isolated = Math.abs(leaked - decrypted.similarity) > 0.1;
   outcomes.push({
-    name: "Extra Â· one share reveals nothing",
+    name: "Extra · one share reveals nothing",
     expected: "reject",
     actual: isolated ? "reject" : "accept",
     detail: `one share decodes to ${leaked.toFixed(4)} vs the true ${decrypted.similarity.toFixed(4)}`,
@@ -233,7 +233,7 @@ export async function runDemo(): Promise<boolean> {
   const tamperedFields = { ...authorization, decision: !authorization.decision };
   const hashStillValid = authorizationHashHex(tamperedFields) === tamperedFields.attestationHash;
   outcomes.push({
-    name: "Extra Â· flipping the decision bit breaks the attestation hash",
+    name: "Extra · flipping the decision bit breaks the attestation hash",
     expected: "reject",
     actual: hashStillValid ? "accept" : "reject",
     detail: "the account re-derives the hash from the struct and compares, it never trusts the digest",
