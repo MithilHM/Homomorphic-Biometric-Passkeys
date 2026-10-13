@@ -116,11 +116,6 @@ export function Hero() {
               How it works
             </Button>
           </div>
-          <p>
-            <span className="inline-block rounded-md bg-background/80 px-2.5 py-1.5 font-mono text-xs text-slate-300 backdrop-blur-sm">
-              Move your pointer — the portrait inverts and reveals under it.
-            </span>
-          </p>
         </div>
       </div>
     </section>
