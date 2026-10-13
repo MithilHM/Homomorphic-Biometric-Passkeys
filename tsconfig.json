@@ -33,7 +33,8 @@
       "@homobio/http-kit": ["packages/http-kit/src/index.ts"],
       "@homobio/store": ["packages/store/src/index.ts"],
       "@homobio/sdk/envelope": ["packages/sdk/src/envelope.ts"],
-      "@homobio/sdk": ["packages/sdk/src/index.ts"]
+      "@homobio/sdk": ["packages/sdk/src/index.ts"],
+      "@homobio/privy-adapter": ["packages/privy-adapter/src/index.ts"]
     }
   },
   "include": [

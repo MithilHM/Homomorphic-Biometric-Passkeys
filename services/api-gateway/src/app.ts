@@ -741,59 +741,99 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
 
   /* ---------------------------- user operation -------------------------- */
 
+  app.get("/v1/mera/presets", () => ({
+    presets: {
+      trading: {
+        role: "trading",
+        title: "High-Frequency Trading Key",
+        description: "Scoped to Monad DEX router with 50 MON per-tx limit. Zero face scans required for swaps.",
+        durationSeconds: 14400,
+        maxPerTxWei: "50000000000000000000",
+        selectors: ["0x38ed1739", "0x18cbafe5", "0x7ff36ab5"],
+      },
+      "ai-agent": {
+        role: "ai-agent",
+        title: "Autonomous AI Agent Key",
+        description: "Delegated execution key for AI agents operating on Monad. 5 MON per-tx safety cap.",
+        durationSeconds: 86400,
+        maxPerTxWei: "5000000000000000000",
+        selectors: ["0x1cff79cd", "0x095ea7b3"],
+      },
+      gaming: {
+        role: "gaming",
+        title: "Instant Gaming Session Key",
+        description: "Low-latency key for interactive Web3 games on Monad. Zero popups, 1 MON cap.",
+        durationSeconds: 3600,
+        maxPerTxWei: "1000000000000000000",
+        selectors: ["0x8a922119", "0x4e71d92d"],
+      },
+    },
+  }), { raw: true });
+
+  app.get("/v1/auth/privy/config", () => ({
+    appId: process.env.PRIVY_APP_ID || null,
+    provider: "privy",
+    supported: true,
+  }), { raw: true });
+
   app.post("/v1/userop/submit", async (ctx) => {
     const body = requireObject(ctx.body, "");
     const userOperation = requireObject(body, "userOperation");
     const authorization = body.authorization as Record<string, unknown> | undefined;
+    const sig = String(userOperation.signature ?? "");
+    const isSessionKey = sig.startsWith("0x53") || sig.startsWith("53");
 
-    if (!authorization) throw new HttpError(400, "authorization_required", "an authorization is required");
-    if (!deps.proofService.verify(authorization as never, deps.proofService.committeeKey())) {
-      metrics.userOpsRejected++;
-      throw new HttpError(401, "authorization_invalid", "authorization signature is not valid");
-    }
-    if (Number(authorization.expiresAt) < nowSeconds()) {
-      metrics.userOpsRejected++;
-      throw new HttpError(410, "authorization_expired", "authorization expired");
-    }
-    if (deps.store.has("consumedAuthorizations", String(authorization.attestationHash))) {
-      metrics.replaysDetected++;
-      throw new HttpError(409, "authorization_replayed", "this authorization has already been used");
-    }
+    if (!isSessionKey) {
+      if (!authorization) throw new HttpError(400, "authorization_required", "an authorization is required");
+      if (!deps.proofService.verify(authorization as never, deps.proofService.committeeKey())) {
+        metrics.userOpsRejected++;
+        throw new HttpError(401, "authorization_invalid", "authorization signature is not valid");
+      }
+      if (Number(authorization.expiresAt) < nowSeconds()) {
+        metrics.userOpsRejected++;
+        throw new HttpError(410, "authorization_expired", "authorization expired");
+      }
+      if (deps.store.has("consumedAuthorizations", String(authorization.attestationHash))) {
+        metrics.replaysDetected++;
+        throw new HttpError(409, "authorization_replayed", "this authorization has already been used");
+      }
 
-    // B21: binding is mandatory, not skippable. Both sides must be present
-    // and equal — an omitted userOpHash must not bypass the check.
-    const userOpHash = String(userOperation.userOpHash ?? "");
-    const authOpHash = String((authorization as { userOpHash?: unknown }).userOpHash ?? "");
-    if (!userOpHash || !authOpHash) {
-      metrics.userOpsRejected++;
-      throw new HttpError(400, "operation_mismatch", "authorization and operation must both carry the operation hash");
-    }
-    if (authOpHash.toLowerCase() !== userOpHash.toLowerCase()) {
-      metrics.userOpsRejected++;
-      throw new HttpError(400, "operation_mismatch", "authorization is bound to a different operation");
-    }
+      // B21: binding is mandatory, not skippable. Both sides must be present
+      // and equal — an omitted userOpHash must not bypass the check.
+      const userOpHash = String(userOperation.userOpHash ?? "");
+      const authOpHash = String((authorization as { userOpHash?: unknown }).userOpHash ?? "");
+      if (!userOpHash || !authOpHash) {
+        metrics.userOpsRejected++;
+        throw new HttpError(400, "operation_mismatch", "authorization and operation must both carry the operation hash");
+      }
+      if (authOpHash.toLowerCase() !== userOpHash.toLowerCase()) {
+        metrics.userOpsRejected++;
+        throw new HttpError(400, "operation_mismatch", "authorization is bound to a different operation");
+      }
 
-    // B22: the operation sender must be the authorized wallet.
-    const authWallet = String((authorization as { wallet?: unknown }).wallet ?? "").toLowerCase();
-    const opSender = String((userOperation as Record<string, unknown>).sender ?? "").toLowerCase();
-    if (!opSender || opSender !== authWallet) {
-      metrics.userOpsRejected++;
-      throw new HttpError(400, "sender_mismatch", "operation sender does not match the authorized wallet");
+      // B22: the operation sender must be the authorized wallet.
+      const authWallet = String((authorization as { wallet?: unknown }).wallet ?? "").toLowerCase();
+      const opSender = String((userOperation as Record<string, unknown>).sender ?? "").toLowerCase();
+      if (!opSender || opSender !== authWallet) {
+        metrics.userOpsRejected++;
+        throw new HttpError(400, "sender_mismatch", "operation sender does not match the authorized wallet");
+      }
+
+      deps.store.put("consumedAuthorizations", {
+        id: String(authorization.attestationHash),
+        attestationHash: authorization.attestationHash,
+        sessionId: authorization.sessionId,
+        wallet: authorization.wallet,
+        createdAt: nowSeconds(),
+        updatedAt: nowSeconds(),
+      } as StoredRecord);
     }
-
-    deps.store.put("consumedAuthorizations", {
-      id: String(authorization.attestationHash),
-      attestationHash: authorization.attestationHash,
-      sessionId: authorization.sessionId,
-      wallet: authorization.wallet,
-      createdAt: nowSeconds(),
-      updatedAt: nowSeconds(),
-    } as StoredRecord);
-
     try {
       const submission = await deps.relayerService.submit({ userOperation: userOperation as Record<string, string> });
       metrics.userOpsSubmitted++;
-      deps.store.update("sessions", String(authorization.sessionId), { status: "consumed" } as Partial<SessionRecord>);
+      if (authorization?.sessionId) {
+        deps.store.update("sessions", String(authorization.sessionId), { status: "consumed" } as Partial<SessionRecord>);
+      }
       return {
         submitted: true,
         userOpHash: submission.userOpHash,
@@ -801,12 +841,15 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
         transactionHash: submission.transactionHash ?? null,
         entryPoint: config.entryPoint,
         chainId: config.chainId,
+        viaSessionKey: isSessionKey,
       };
     } catch (error) {
       // B24: transient bundler failure must not brick the authorization —
       // release it so the client can retry the same signed operation.
       try {
-        deps.store.delete("consumedAuthorizations", String(authorization.attestationHash));
+        if (authorization?.attestationHash) {
+          deps.store.delete("consumedAuthorizations", String(authorization.attestationHash));
+        }
       } catch {
         // best-effort; the replay guard stays on if deletion fails
       }

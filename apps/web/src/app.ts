@@ -14,13 +14,15 @@ import {
   type PipelineStage,
 } from "@homobio/biometric-client";
 import { isWebAuthnSupported } from "@homobio/webauthn";
+import { MeraSessionManager, type MeraKeyRole, type MeraSessionKey, MERA_KEY_PRESETS } from "@homobio/sdk";
+import { PrivyPasskeyProvider } from "@homobio/privy-adapter";
 import { announce, mount, type VNode } from "./ui.js";
 import { CameraController } from "./camera.js";
 import { FlowController } from "./flows.js";
 
 interface AppState {
   stage: PipelineStage;
-  tab: "onboard" | "authenticate" | "wallet" | "diagnostics";
+  tab: "onboard" | "authenticate" | "wallet" | "mera" | "diagnostics";
   wallet: string;
   config: any;
   account: any;
@@ -30,6 +32,10 @@ interface AppState {
   livenessInstruction?: string;
   progress?: number;
   busy: boolean;
+  authProvider: "privy" | "native";
+  privyAppId: string;
+  selectedMeraRole: MeraKeyRole;
+  lastMeraTx?: { keyTitle: string; hash: string; gasSaved: string; durationMs: number; viaSessionKey: boolean };
 }
 
 const STAGES: Array<{ stage: PipelineStage; label: string }> = [
@@ -56,10 +62,15 @@ export class App {
     config: null,
     account: null,
     busy: false,
+    authProvider: "privy",
+    privyAppId: "",
+    selectedMeraRole: "trading",
   };
 
   readonly camera = new CameraController();
   readonly flows: FlowController;
+  readonly mera = new MeraSessionManager();
+  readonly privy = new PrivyPasskeyProvider();
 
   constructor(private readonly root: HTMLElement) {
     this.flows = new FlowController(this);
@@ -107,6 +118,7 @@ export class App {
         this.state.tab === "onboard" ? this.onboardView() : null,
         this.state.tab === "authenticate" ? this.authenticateView() : null,
         this.state.tab === "wallet" ? this.walletView() : null,
+        this.state.tab === "mera" ? this.meraView() : null,
         this.state.tab === "diagnostics" ? this.diagnosticsView() : null,
         this.pipelineView(),
         this.footer(),
@@ -117,17 +129,53 @@ export class App {
 
   private masthead(): VNode {
     const config = this.state.config;
+    const isPrivy = this.state.authProvider === "privy";
+    const privyUser = isPrivy ? this.privy.getUser() : null;
+
     return {
       tag: "header",
       className: "masthead",
       children: [
-        { tag: "h1", children: "Homomorphic Biometric Passkeys" },
         {
-          tag: "span",
-          className: "chain",
-          children: config
-            ? `${config.chainName} Â· chain ${config.chainId} Â· EntryPoint ${short(config.entryPoint)}`
-            : "connectingâ€¦",
+          tag: "div",
+          children: [
+            { tag: "h1", children: "Homomorphic Biometric Passkeys on Monad" },
+            {
+              tag: "span",
+              className: "chain",
+              children: config
+                ? `${config.chainName} · chain ${config.chainId} · EntryPoint ${short(config.entryPoint)}`
+                : "connecting…",
+            },
+          ],
+        },
+        {
+          tag: "div",
+          className: "row provider-bar",
+          children: [
+            {
+              tag: "span",
+              className: `badge ${isPrivy ? "privy" : "ok"}`,
+              text: isPrivy ? "Privy Passkey (P-256 Enclave)" : "Native WebAuthn",
+            },
+            {
+              tag: "button",
+              className: "ghost provider-toggle-btn",
+              text: isPrivy ? "Switch to Native" : "Switch to Privy",
+              onClick: () => {
+                const next = isPrivy ? "native" : "privy";
+                this.set({ authProvider: next });
+                localStorage.setItem("homobio.auth_provider", next);
+              },
+            },
+            privyUser
+              ? {
+                  tag: "span",
+                  className: "badge info",
+                  text: `DID: ${short(privyUser.id)}`,
+                }
+              : null,
+          ],
         },
       ],
     };
@@ -135,9 +183,10 @@ export class App {
 
   private tabs(): VNode {
     const tabs: Array<[AppState["tab"], string]> = [
-      ["onboard", "1 Â· Create wallet"],
-      ["authenticate", "2 Â· Authenticate"],
-      ["wallet", "3 Â· Wallet"],
+      ["onboard", "1 · Create wallet"],
+      ["authenticate", "2 · Authenticate"],
+      ["wallet", "3 · Smart account"],
+      ["mera", "4 · Mera (Many Keys)"],
       ["diagnostics", "Diagnostics"],
     ];
     return {
@@ -508,6 +557,214 @@ export class App {
     };
   }
 
+  private meraView(): VNode {
+    const keys = this.mera.listKeys();
+    const presets = MERA_KEY_PRESETS;
+    const selectedPreset = presets[this.state.selectedMeraRole] ?? presets.trading;
+
+    return {
+      tag: "div",
+      className: "grid",
+      children: [
+        {
+          tag: "section",
+          className: "card mera-hero-card",
+          children: [
+            {
+              tag: "div",
+              className: "row between",
+              children: [
+                { tag: "h2", children: "Monad Mera: One Passkey, Many Keys" },
+                { tag: "span", className: "badge ok", text: "Monad EVM · ERC-4337 Session Keys" },
+              ],
+            },
+            {
+              tag: "p",
+              className: "hint",
+              children:
+                "Demonstrating Monad Foundation's Mera architecture: One hardware passkey + homomorphic biometric template acts as the cryptographic root authority to issue and govern multiple specialized, ephemeral sub-keys (Trading, AI Agents, Gaming) without repetitive biometric prompts.",
+            },
+            {
+              tag: "dl",
+              className: "kv",
+              children: [
+                { tag: "dt", children: "Root Smart Account" },
+                { tag: "dd", children: this.state.wallet || "Load address first" },
+                { tag: "dt", children: "Root Authority" },
+                {
+                  tag: "dd",
+                  children:
+                    this.state.authProvider === "privy"
+                      ? "Privy Hardware Passkey (P-256 Secure Enclave) + RLWE FHE Match"
+                      : "Native WebAuthn + RLWE FHE Match",
+                },
+                { tag: "dt", children: "Session Protocol" },
+                { tag: "dd", children: "MAGIC_SESSION (0x53 envelope) · Zero face scans needed" },
+              ],
+            },
+          ],
+        },
+        {
+          tag: "section",
+          className: "card",
+          children: [
+            { tag: "h2", children: "Authorize New Mera Sub-Key" },
+            {
+              tag: "p",
+              className: "hint",
+              children: "Requires root authorization (Privy passkey touch + FHE biometric scan) once to register on Monad.",
+            },
+            {
+              tag: "div",
+              className: "field",
+              children: [
+                { tag: "label", for: "mera-role-select", children: "Select Sub-Key Role Template" },
+                {
+                  tag: "select",
+                  id: "mera-role-select",
+                  value: this.state.selectedMeraRole,
+                  onInput: (val: string) => {
+                    this.set({ selectedMeraRole: val as MeraKeyRole });
+                  },
+                  children: [
+                    { tag: "option", value: "trading", text: "⚡ High-Frequency Trading Key (DEX Swaps, 50 MON cap, 4h)" },
+                    { tag: "option", value: "ai-agent", text: "🤖 Autonomous AI Agent Key (Agent Router, 5 MON cap, 24h)" },
+                    { tag: "option", value: "gaming", text: "🎮 Instant Gaming Key (Micro-tx, 1 MON cap, 1h)" },
+                  ],
+                },
+              ],
+            },
+            {
+              tag: "div",
+              className: "alert",
+              children: [
+                { tag: "strong", children: selectedPreset.title },
+                { tag: "span", children: selectedPreset.description },
+              ],
+            },
+            {
+              tag: "div",
+              className: "row",
+              children: [
+                {
+                  tag: "button",
+                  className: "primary",
+                  text: this.state.busy ? "Authorizing on Monad…" : "🔑 Authorize Sub-Key (Passkey + Face Scan)",
+                  disabled: this.state.busy || !this.state.wallet,
+                  onClick: () => void this.flows.grantMeraKey(this.state.selectedMeraRole),
+                },
+              ],
+            },
+          ],
+        },
+        {
+          tag: "section",
+          className: "card mera-keys-list",
+          children: [
+            { tag: "h2", children: `Active Sub-Keys (${keys.length})` },
+            {
+              tag: "p",
+              className: "hint",
+              children: "Once granted on-chain, transactions signed by these keys execute instantly with 0 face scans.",
+            },
+            keys.length === 0
+              ? { tag: "p", className: "hint", children: "No sub-keys generated yet. Authorize a key above to test 'One Passkey, Many Keys'." }
+              : {
+                  tag: "div",
+                  className: "key-cards-list",
+                  children: keys.map((key) => ({
+                    tag: "div",
+                    className: "card subkey-item",
+                    children: [
+                      {
+                        tag: "div",
+                        className: "row between",
+                        children: [
+                          { tag: "strong", children: key.title },
+                          {
+                            tag: "span",
+                            className: `badge ${key.status === "active" ? "ok" : "bad"}`,
+                            text: key.status.toUpperCase(),
+                          },
+                        ],
+                      },
+                      {
+                        tag: "dl",
+                        className: "kv",
+                        children: [
+                          { tag: "dt", children: "Key Address" },
+                          { tag: "dd", children: short(key.address) },
+                          { tag: "dt", children: "Valid Until" },
+                          { tag: "dd", children: new Date(key.validUntil * 1000).toLocaleTimeString() },
+                          { tag: "dt", children: "Limit per Tx" },
+                          { tag: "dd", children: `${(Number(key.maxValuePerTxWei) / 1e18).toFixed(1)} MON` },
+                          { tag: "dt", children: "Executions" },
+                          { tag: "dd", children: `${key.txCount} txs` },
+                        ],
+                      },
+                      {
+                        tag: "div",
+                        className: "row",
+                        children: [
+                          {
+                            tag: "button",
+                            className: "primary",
+                            text: this.state.busy ? "Executing…" : "⚡ Instant Execute (0x53 Envelope)",
+                            disabled: this.state.busy || key.status !== "active",
+                            onClick: () => void this.flows.executeWithMeraKey(key.id),
+                          },
+                          {
+                            tag: "button",
+                            className: "ghost",
+                            text: "Revoke",
+                            disabled: this.state.busy || key.status !== "active",
+                            onClick: () => this.flows.revokeMeraKey(key.id),
+                          },
+                        ],
+                      },
+                    ],
+                  })),
+                },
+          ],
+        },
+        this.state.lastMeraTx
+          ? {
+              tag: "section",
+              className: "card mera-receipt-card",
+              children: [
+                {
+                  tag: "div",
+                  className: "row between",
+                  children: [
+                    { tag: "h2", children: "⚡ Sub-Key Execution Verified on Monad" },
+                    { tag: "span", className: "badge ok", text: "Zero Biometric Scans" },
+                  ],
+                },
+                {
+                  tag: "dl",
+                  className: "kv",
+                  children: [
+                    { tag: "dt", children: "Key Used" },
+                    { tag: "dd", children: this.state.lastMeraTx.keyTitle },
+                    { tag: "dt", children: "UserOp Hash" },
+                    { tag: "dd", children: this.state.lastMeraTx.hash },
+                    { tag: "dt", children: "Execution Mode" },
+                    { tag: "dd", children: "0x53 MAGIC_SESSION envelope" },
+                    { tag: "dt", children: "Execution Latency" },
+                    { tag: "dd", children: `${this.state.lastMeraTx.durationMs}ms (Instant)` },
+                    { tag: "dt", children: "Biometric Overhead Saved" },
+                    { tag: "dd", children: "100% saved (no webcam capture or FHE encryption needed)" },
+                    { tag: "dt", children: "Gas Saved" },
+                    { tag: "dd", children: this.state.lastMeraTx.gasSaved },
+                  ],
+                },
+              ],
+            }
+          : null,
+      ],
+    };
+  }
+
   private diagnosticsView(): VNode {
     const config = this.state.config;
     return {
@@ -628,6 +885,13 @@ export class App {
   private restore(): void {
     const saved = localStorage.getItem("homobio.wallet");
     if (saved) this.state.wallet = saved;
+    const provider = localStorage.getItem("homobio.auth_provider") as "privy" | "native" | null;
+    if (provider) this.state.authProvider = provider;
+    const appId = localStorage.getItem("homobio.privy_app_id");
+    if (appId) {
+      this.state.privyAppId = appId;
+      this.privy.setAppId(appId);
+    }
   }
 
   rememberWallet(): void {

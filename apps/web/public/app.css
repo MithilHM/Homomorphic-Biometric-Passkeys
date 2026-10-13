@@ -162,3 +162,68 @@ code { font-family: var(--mono); font-size: 0.85em; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Monad Mera & Privy Custom Styles */
+:root {
+  --monad: #836ef9;
+  --monad-glow: rgba(131, 110, 249, 0.22);
+  --privy: #a78bfa;
+}
+
+.badge.privy {
+  color: var(--privy);
+  border-color: rgba(167, 139, 250, 0.4);
+  background: rgba(167, 139, 250, 0.08);
+}
+.badge.info {
+  color: var(--accent-2);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.provider-bar {
+  align-items: center;
+}
+
+.provider-toggle-btn {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+}
+
+.mera-hero-card {
+  border-top: 3px solid var(--monad);
+  background: linear-gradient(180deg, rgba(131, 110, 249, 0.06) 0%, var(--panel) 100%);
+}
+
+.mera-keys-list {
+  grid-column: 1 / -1;
+}
+
+.key-cards-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+
+.subkey-item {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.8rem;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.subkey-item:hover {
+  border-color: var(--monad);
+  box-shadow: 0 4px 12px var(--monad-glow);
+}
+
+.mera-receipt-card {
+  grid-column: 1 / -1;
+  border-left: 4px solid var(--ok);
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.08) 0%, var(--panel) 100%);
+}

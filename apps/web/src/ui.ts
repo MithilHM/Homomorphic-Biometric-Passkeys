@@ -42,7 +42,7 @@ export function render(node: VNode | string | number): Node {
     if (value === undefined || value === null || value === false) continue;
 
     const attribute = propertyMap[key] ?? key;
-    if (attribute === "value" && element instanceof HTMLInputElement) {
+    if (attribute === "value" && (element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) {
       element.value = String(value);
       continue;
     }
@@ -62,10 +62,12 @@ export function render(node: VNode | string | number): Node {
   }
   if (node.onClick) element.addEventListener("click", node.onClick);
   if (node.onInput) {
-    element.addEventListener("input", (event) => {
-      const target = event.target as HTMLInputElement | null;
+    const handler = (event: Event) => {
+      const target = event.target as HTMLInputElement | HTMLSelectElement | null;
       node.onInput?.(target?.value ?? "");
-    });
+    };
+    element.addEventListener("input", handler);
+    element.addEventListener("change", handler);
   }
 
   for (const child of childrenOf(node)) {

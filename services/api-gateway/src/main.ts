@@ -25,6 +25,12 @@ import { serveStatic, ensureWebBundle } from "./static.js";
 
 const logger = createLogger("api-gateway");
 
+try {
+  process.loadEnvFile?.();
+} catch {
+  // .env is optional
+}
+
 const DATA_DIR = process.env.HOMOBIO_DATA_DIR ?? path.resolve(process.cwd(), ".data");
 const PORT = Number(process.env.PORT ?? 5000);
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? 143);

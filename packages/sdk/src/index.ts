@@ -419,3 +419,4 @@ export async function createBiometricWallet(options: {
 
 export { getUserOpHash, UserOperationBuilder, NonceDomain, nowSeconds, keccak256Hex };
 export { packAuthorizationEnvelope, AUTHORIZATION_MAGIC } from "./envelope.js";
+export * from "./mera.js";
