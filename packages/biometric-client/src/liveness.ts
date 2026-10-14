@@ -186,11 +186,13 @@ export class LivenessSession {
       horizontalDrift = (max - min) / Math.max(1, faceWidth);
     }
 
-    // L3: directional growth — the face must end up LARGER (closer), not just
-    // vary in size. max-min spread passes when backing away; last-vs-first
-    // does not.
+    // Directional AND persistent growth: the face must end up LARGER (closer)
+    // than it started, measured against its largest observed size — not just
+    // the final frame. A user who approaches early then settles back while
+    // samples collect has still proven live motion; only a static image (or
+    // backing away from the start) fails. Matches turn_* max-drift semantics.
     let areaGrowth = 0;
-    if (areas.length > 1) areaGrowth = (areas[areas.length - 1] - areas[0]) / Math.max(1, areas[0]);
+    if (areas.length > 1) areaGrowth = (Math.max(...areas) - areas[0]) / Math.max(1, areas[0]);
 
     // Blink detection: a local dip in eye-region luminance relative to the
     // surrounding frames. The window is centred on the candidate frame and

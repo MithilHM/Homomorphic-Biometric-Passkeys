@@ -231,18 +231,34 @@ export class FlowController {
     const session = new BiometricCaptureSession();
     this.app.set({ livenessInstruction: session.instruction });
 
-    const deadline = Date.now() + 20_000;
+    // Enrollment gives the user room to read, position, and perform the
+    // challenge: 60s for motion + samples, then a one-time 30s extension for
+    // samples only if the motion was already accepted. Failing fast here is
+    // what made first-time enrollment feel impossible.
+    let deadline = Date.now() + 60_000;
+    let extended = false;
     const reasonCounts = new Map<string, number>();
     let lastReasons: string[] = [];
     let lastUiUpdate = 0;
+    let motionAccepted = false;
 
-    while (Date.now() < deadline && session.capturedSamples.length < ENROLL_SAMPLES) {
+    for (;;) {
+      const now = Date.now();
+      if (now >= deadline) {
+        if (!extended && (motionAccepted || session.livenessResult?.passed) && session.capturedSamples.length > 0) {
+          extended = true;
+          deadline = now + 30_000;
+        } else {
+          break;
+        }
+      }
       const frame = this.app.camera.capture();
       if (!frame) {
         await sleep(80);
         continue;
       }
       const pushed = session.push(frame);
+      if (pushed.liveness?.passed || session.livenessResult?.passed) motionAccepted = true;
       for (const reason of pushed.quality.reasons) {
         reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
       }
@@ -258,16 +274,21 @@ export class FlowController {
       // a static instruction and the progress bar only appeared after the first
       // usable sample, so a camera that never produced one looked "stuck on"
       // for the full 20s with no hint (too dark, too far, no face found).
-      const now = Date.now();
       if (now - lastUiUpdate > 200) {
         lastUiUpdate = now;
+        const secondsLeft = Math.ceil((deadline - now) / 1000);
+        // Once the motion is accepted, say so: the user can relax and hold
+        // still for the remaining samples instead of repeating the motion.
+        const instruction = motionAccepted
+          ? `Motion accepted — hold still (${Math.max(0, ENROLL_SAMPLES - count)} more sample${ENROLL_SAMPLES - count === 1 ? "" : "s"})`
+          : session.instruction;
         this.app.set({
           progress: count / ENROLL_SAMPLES,
           stage: count < ENROLL_SAMPLES ? "face_quality_ok" : "embedding_generated",
-          livenessInstruction: captureFeedback(session.instruction, count, session.liveness.frameCount, lastReasons),
+          livenessInstruction: captureFeedback(instruction, count, session.liveness.frameCount, lastReasons, secondsLeft),
         });
       }
-      if (pushed.liveness?.passed && count >= ENROLL_SAMPLES) break;
+      if (motionAccepted && count >= ENROLL_SAMPLES) break;
       await sleep(60);
     }
 
@@ -471,7 +492,10 @@ export class FlowController {
       this.app.set({ livenessInstruction: session.instruction });
       let vector: Float64Array | undefined;
 
-      const deadline = Date.now() + 15_000;
+      // 30s: the passkey ceremony already ate attention budget — the face
+      // check must not rush what is left of it. Challenge TTL is 120s, so
+      // this still verifies comfortably inside the window.
+      const deadline = Date.now() + 30_000;
       const reasonCounts = new Map<string, number>();
       let lastReasons: string[] = [];
       let lastUiUpdate = 0;
@@ -496,7 +520,13 @@ export class FlowController {
               livenessInstruction:
                 vector || passed
                   ? session.instruction
-                  : captureFeedback(session.instruction, 0, session.liveness.frameCount, lastReasons),
+                  : captureFeedback(
+                      session.instruction,
+                      0,
+                      session.liveness.frameCount,
+                      lastReasons,
+                      Math.ceil((deadline - now) / 1000),
+                    ),
             });
           }
         }
@@ -1060,13 +1090,20 @@ function errorCode(error: unknown): string {
 }
 
 /** Viewfinder line: instruction + live sample/motion progress + current blocker. */
-function captureFeedback(instruction: string, samples: number, motionFrames: number, reasons: string[]): string {
+function captureFeedback(
+  instruction: string,
+  samples: number,
+  motionFrames: number,
+  reasons: string[],
+  secondsLeft?: number,
+): string {
   const blocker = reasons.length > 0 ? describeReason(reasons[0]) : undefined;
+  const clock = secondsLeft === undefined ? "" : ` — ${Math.max(0, secondsLeft)}s left`;
   if (samples === 0 && motionFrames === 0) {
-    return blocker ? `${instruction} — ${blocker}` : `${instruction} (looking for your face…)`;
+    return blocker ? `${instruction} — ${blocker}${clock}` : `${instruction} (looking for your face…)${clock}`;
   }
   const progress = samples > 0 ? ` — ${samples}/${ENROLL_SAMPLES} samples` : " — no usable samples yet";
-  return blocker ? `${instruction}${progress} — ${blocker}` : `${instruction}${progress}`;
+  return blocker ? `${instruction}${progress} — ${blocker}${clock}` : `${instruction}${progress}${clock}`;
 }
 
 function describeReason(reason: string): string | undefined {
