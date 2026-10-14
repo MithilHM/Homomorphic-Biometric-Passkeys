@@ -68,11 +68,16 @@ contract BiometricSmartAccountTest is Test {
 
     /// A fully valid, correctly signed authorization for THIS account.
     function _authorization(bytes32 userOpHash) internal view returns (Authorization memory a) {
+        return _authorizationFor(userOpHash, bytes16(keccak256("session")));
+    }
+
+    /// Same, but with an explicit session id so one test can consume many.
+    function _authorizationFor(bytes32 userOpHash, bytes16 sessionId) internal view returns (Authorization memory a) {
         a.version = 1;
         a.wallet = address(account);
         a.chainId = uint64(block.chainid);
         a.userOpHash = userOpHash;
-        a.sessionId = bytes16(keccak256("session"));
+        a.sessionId = sessionId;
         a.policyHash = POLICY_HASH;
         a.templateVersion = 1;
         a.fheKeyVersion = 1;
@@ -139,10 +144,18 @@ contract BiometricSmartAccountTest is Test {
     }
 
     function _userOp(bytes memory signature) internal view returns (PackedUserOperation memory op) {
+        return _userOpWithCallData(signature, "");
+    }
+
+    function _userOpWithCallData(bytes memory signature, bytes memory callData)
+        internal
+        view
+        returns (PackedUserOperation memory op)
+    {
         op.sender = address(account);
         op.nonce = 0;
         op.initCode = "";
-        op.callData = "";
+        op.callData = callData;
         op.callGasLimit = 100_000;
         op.verificationGasLimit = 500_000;
         op.preVerificationGas = 50_000;
@@ -153,8 +166,15 @@ contract BiometricSmartAccountTest is Test {
     }
 
     function _validate(bytes memory envelope, bytes32 userOpHash) internal returns (uint256) {
+        return _validateWithCallData(envelope, userOpHash, "");
+    }
+
+    function _validateWithCallData(bytes memory envelope, bytes32 userOpHash, bytes memory callData)
+        internal
+        returns (uint256)
+    {
         vm.prank(address(entryPoint));
-        return account.validateUserOp(_userOp(envelope), userOpHash, 0);
+        return account.validateUserOp(_userOpWithCallData(envelope, callData), userOpHash, 0);
     }
 
     /* ================================ happy path ============================ */
@@ -502,6 +522,105 @@ contract BiometricSmartAccountTest is Test {
         // cannot pass for an unrelated reason (e.g. NotAccount).
         vm.expectRevert(abi.encodeWithSignature("DelayTooShort()"));
         account.initiateRecovery(keccak256("new-passkey"), 1 hours);
+    }
+
+    /* ==================== daily authorization budget (T-15) =============== */
+
+    /// Each iteration needs a fresh session id (single-use) and a fresh
+    /// userOpHash (the verifier binds the authorization to the operation).
+    function _validateFresh(uint256 i) internal returns (bytes32 userOpHash) {
+        userOpHash = keccak256(abi.encode("budget-op", i));
+        Authorization memory a =
+            _authorizationFor(userOpHash, bytes16(keccak256(abi.encode("budget-session", i))));
+        _validate(_pack(a, hex"aabb"), userOpHash);
+    }
+
+    function test_dailyBudget_allowsUpToCap() public {
+        uint256 cap = account.MAX_AUTHORIZATIONS_PER_DAY();
+        assertEq(cap, 25, "cap must mirror SponsorshipPaymaster.MAX_SPONSORED_OPS");
+        for (uint256 i = 0; i < cap; i++) {
+            _validateFresh(i);
+        }
+        assertEq(account.authCountToday(), cap, "every consumed authorization must be counted");
+    }
+
+    function test_dailyBudget_revertsAboveCapWithoutBurningSession() public {
+        for (uint256 i = 0; i < 25; i++) {
+            _validateFresh(i);
+        }
+        bytes32 userOpHash = keccak256("over-cap-op");
+        Authorization memory a = _authorizationFor(userOpHash, bytes16(keccak256("over-cap-session")));
+
+        vm.expectRevert(BiometricSmartAccount.DailyAuthorizationBudgetExceeded.selector);
+        _validate(_pack(a, hex"aabb"), userOpHash);
+        // The budget is checked BEFORE verifyAndConsume, so the capped
+        // attempt must leave the session untouched for the next UTC day.
+        assertFalse(verifier.consumed(a.sessionId), "capped attempt must not burn the session");
+    }
+
+    function test_dailyBudget_resetsAtUtcMidnight() public {
+        _validateFresh(0);
+        assertEq(account.authCountToday(), 1, "first authorization of the day counts as one");
+
+        // Jump just past the next UTC midnight. issuedAt/expiresAt are read
+        // from block.timestamp, so authorizations minted after the warp bind
+        // to the new day.
+        uint64 tomorrow = uint64((block.timestamp / 1 days + 1) * 1 days + 1);
+        vm.warp(tomorrow);
+        _validateFresh(1);
+        assertEq(account.authCountToday(), 1, "count must restart on a new UTC day");
+        assertEq(account.lastAuthDay(), tomorrow / 1 days, "day stamp must track the new UTC day");
+    }
+
+    /// At the cap the owner must still be able to cancel a pending recovery:
+    /// the cancel path bypasses the budget, or funds lock forever (C3).
+    function test_dailyBudget_cancelStillWorksAtCap() public {
+        for (uint256 i = 0; i < 25; i++) {
+            _validateFresh(i);
+        }
+        bytes32 requestId = account.initiateRecovery(keccak256("new-passkey"), 48 hours);
+        bytes memory cancelCallData = abi.encodeWithSelector(account.cancelRecovery.selector, requestId);
+
+        bytes32 userOpHash = keccak256("cancel-op");
+        Authorization memory a = _authorizationFor(userOpHash, bytes16(keccak256("cancel-session")));
+        _validateWithCallData(_pack(a, hex"aabb"), userOpHash, cancelCallData);
+        assertTrue(verifier.consumed(a.sessionId), "cancel authorization must still be consumed");
+        assertEq(account.authCountToday(), 25, "cancel must not consume budget");
+    }
+
+    /// The 0x53 session-key path never touches the authorization budget, so a
+    /// delegation granted before the cap still validates after it.
+    function test_dailyBudget_sessionKeyPathUntouchedAtCap() public {
+        for (uint256 i = 0; i < 25; i++) {
+            _validateFresh(i);
+        }
+        address sessionKey = makeAddr("sessionKey");
+        address target = makeAddr("target");
+        bytes4 selector = bytes4(0xdeadbeef);
+        uint256 value = 0;
+        uint64 validUntil = uint64(block.timestamp) + 1 hours;
+        bytes32 scopeHash = keccak256("scope");
+        address[] memory targets = new address[](1);
+        targets[0] = target;
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = selector;
+        vm.prank(address(entryPoint));
+        account.grantSessionKey(sessionKey, validUntil, 1 ether, 0, targets, selectors, scopeHash);
+
+        // 0x53 | uint16 len | key | until | selector | value | scopeHash.
+        bytes memory envelope =
+            abi.encodePacked(uint8(0x53), uint16(96), sessionKey, validUntil, selector, value, scopeHash);
+        bytes memory callData =
+            abi.encodeWithSelector(account.execute.selector, target, value, abi.encodePacked(selector));
+        bytes32 userOpHash = keccak256("session-op");
+        vm.prank(address(entryPoint));
+        uint256 validationData =
+            account.validateUserOp(_userOpWithCallData(envelope, callData), userOpHash, 0);
+
+        (address aggregator, bool failed, uint48 validUntilOut) = ValidationData.unpack(validationData);
+        assertEq(aggregator, address(0), "aggregator must be zero");
+        assertFalse(failed, "session validation must not fail at the authorization cap");
+        assertEq(uint256(validUntilOut), uint256(validUntil), "validUntil must be the session expiry");
     }
 }
 

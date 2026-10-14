@@ -184,6 +184,45 @@ export interface ServerOptions {
   defaultMaxBodyBytes?: number;
   serviceAuthToken?: string;
   onRequest?: (ctx: RequestContext, durationMs: number, status: number) => void;
+  /**
+   * Opt-in `Content-Security-Policy` value emitted on every response (documents,
+   * API JSON, errors and preflights). Absent or `false` means no header, which
+   * keeps non-browser services (the FHE coprocessor) byte-identical. Use
+   * `defaultContentSecurityPolicy()` for the deny-ish wallet default.
+   */
+  contentSecurityPolicy?: string | false;
+}
+
+/**
+ * Deny-ish default policy for the dependency-free wallet bundle (M3.4).
+ *
+ * Checked read-only against `apps/web/public/index.html` and the served
+ * bundle before writing: no inline `<script>` or `<style>` in the page (the
+ * bundle loads as an external module `./app.js`, styles via external
+ * `./app.css`); no remote imports anywhere under `apps/web/src`; the renderer
+ * binds with `addEventListener`, never inline event-handler attributes. The
+ * only cross-origin needs are the Google Fonts stylesheet and font files.
+ * There is deliberately NO `unsafe-inline` and NO `unsafe-eval` here.
+ *
+ * Known trade-offs, stated so nobody widens this silently:
+ * - the gateway fallback page (`services/api-gateway/src/static.ts`) ships an
+ *   inline `<style>`; under this policy it renders unstyled but functional.
+ * - enabling Privy with a real App ID will need `connect-src`/`script-src`
+ *   allowances for Privy endpoints; extend explicitly, never by default.
+ */
+export function defaultContentSecurityPolicy(): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
 }
 
 const DEFAULT_MAX_BODY = 256 * 1024;
@@ -247,6 +286,11 @@ export class HttpApp {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     response.setHeader("cache-control", "no-store");
+    // Opt-in only: absent/false emits nothing, so services that never serve
+    // documents (the FHE coprocessor) stay byte-identical.
+    if (typeof this.options.contentSecurityPolicy === "string" && this.options.contentSecurityPolicy.length > 0) {
+      response.setHeader("content-security-policy", this.options.contentSecurityPolicy);
+    }
 
     try {
       this.applyCors(request, response);

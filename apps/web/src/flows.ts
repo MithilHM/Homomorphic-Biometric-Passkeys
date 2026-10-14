@@ -26,6 +26,7 @@ import { HomomorphicEngine, type PublicKeyBundle } from "@homobio/fhe";
 import { packAuthorizationEnvelope } from "@homobio/sdk/envelope";
 import type { MeraKeyRole } from "@homobio/sdk";
 import type { App } from "./app.js";
+import { previewUserOperation } from "./simulate.js";
 
 const ENROLL_SAMPLES = 7;
 
@@ -159,11 +160,39 @@ export class FlowController {
         role: "primary",
       });
       await this.app.refresh();
+      // F5c: residentKey "required" was requested above, so a conforming
+      // authenticator either made a discoverable credential or aborted. The
+      // browser reports no per-credential discoverable flag for
+      // attestation:"none" ceremonies, so the enroll-time assert is that the
+      // new id round-trips to the server credential list; absence fails closed.
+      let roundTripped = true;
+      try {
+        const listed = await fetch(`/v1/wallet/${wallet}/credentials`);
+        if (listed.ok) {
+          const body = await listed.json();
+          const ids = Array.isArray(body.credentials) ? body.credentials : [];
+          roundTripped = ids.some((c: any) => c.credentialId === registered.credentialId);
+        }
+      } catch {
+        // Unreachable list: keep the success; the picker refetches before auth.
+      }
+      if (!roundTripped) {
+        this.app.set({ busy: false });
+        this.app.fail(
+          "proof_error",
+          "The new passkey was created in the browser but the server does not list it, so it cannot sign in. Try registering again.",
+        );
+        return;
+      }
+      const privyNote =
+        this.app.state.authProvider === "privy"
+          ? " Privy-managed keys may not appear in this device's browser picker — keep a native passkey too if you sign in here."
+          : "";
       this.app.set({
         busy: false,
         notice: {
           kind: "success",
-          text: `Passkey registered (${label}). Credential ${registered.credentialId.slice(0, 12)}… is now authorized for ${wallet}.`,
+          text: `Passkey registered (${label}). Credential ${registered.credentialId.slice(0, 12)}… is now authorized for ${wallet}.${privyNote}`,
         },
       });
     } catch (error) {
@@ -176,6 +205,8 @@ export class FlowController {
   }
 
   async enrollBiometric(): Promise<void> {
+    // One enrollment at a time: the busy flag owns the capture loop, so a second click cannot interleave.
+    if (this.app.state.busy) return;
     const wallet = this.app.state.wallet;
     if (!wallet) {
       this.app.fail("passkey_cancelled", "set an address first");
@@ -358,6 +389,16 @@ export class FlowController {
         .build();
       const userOpHash = getUserOpHash(userOp, config.entryPoint, config.chainId);
 
+      // T-13 (M3.8) transaction preview: never ask the user to approve blind
+      // calldata. This line is the whole wiring — the decoder is pure, and an
+      // unrecognized payload shows a warning instead of a guessed decode.
+      this.app.set({
+        notice: {
+          kind: "warn",
+          text: `${previewUserOperation({ callData: userOp.callData, value: 0n })} Reference ${userOpHash.slice(0, 12)}...`,
+        },
+      });
+
       // 2. Challenge.
       this.app.setStage("passkey_prompt");
       const challenge = await this.post<any>("/v1/auth/challenge", {
@@ -367,12 +408,29 @@ export class FlowController {
       });
 
       const credentials = await fetch(`/v1/wallet/${wallet}/credentials`).then((r) => r.json());
-      const credential = credentials.credentials?.[0];
+      const list = credentials.credentials ?? [];
+      // O1: an explicit pick uses an allow-list for that id; otherwise one
+      // credential uses an allow-list and many use the discoverable ceremony.
+      // The server enforces wallet ownership of whichever id comes back.
+      const pickedId = this.app.state.selectedCredentialId;
+      const picked = pickedId ? list.find((c: any) => c.credentialId === pickedId) : undefined;
+      if (pickedId && !picked) {
+        this.app.set({ busy: false });
+        this.app.fail(
+          "passkey_cancelled",
+          "The chosen passkey is no longer on this wallet. Pick another one or let the browser choose.",
+        );
+        return;
+      }
+      const credential = picked ?? list[0];
       const credentialId = credential?.credentialId;
       if (!credentialId) {
         this.app.set({ busy: false });
         this.app.fail("passkey_cancelled", "no active passkey");
         return;
+      }
+      if (JSON.stringify(list.map((c: any) => c.credentialId)) !== JSON.stringify(this.app.state.credentials.map((c) => c.credentialId))) {
+        this.app.set({ credentials: list });
       }
 
       let assertion: any;
@@ -384,13 +442,15 @@ export class FlowController {
         });
       } else {
         // One credential: direct allow-list (fastest, routes to its authenticator).
-        // Several (e.g. desktop + phone): discoverable ceremony. An allow-list
-        // pinned to credentials[0] makes every other authenticator answer "no
-        // passkey found" — the phone holds a different credential id than the
-        // desktop one. Ownership of the returned id is enforced server-side.
-        const list = credentials.credentials ?? [];
+        // Several (e.g. desktop + phone): discoverable ceremony, unless the
+        // user picked one in the picker — then an allow-list for that id.
+        // An allow-list pinned to credentials[0] makes every other
+        // authenticator answer "no passkey found" — the phone holds a
+        // different credential id than the desktop one. Ownership of the
+        // returned id is enforced server-side.
+        const useAllowList = Boolean(credentialId) && (Boolean(picked) || list.length === 1);
         assertion =
-          list.length === 1 && credentialId
+          useAllowList && credentialId
             ? await getAssertion({
                 rpId: challenge.rpId,
                 challenge: challenge.challenge,
@@ -638,6 +698,10 @@ export class FlowController {
     }
     try {
       const recovery = await this.post<any>(`/v1/wallet/${wallet}/recovery`, {});
+      this.app.set({
+        recoveryRequestId: recovery.requestId ?? "",
+        recoveryExecutableAt: recovery.executableAt ?? 0,
+      });
       await this.app.refresh();
       this.app.set({
         notice: {
@@ -646,6 +710,108 @@ export class FlowController {
         },
       });
     } catch (error) {
+      this.app.fail("proof_error", (error as Error).message);
+    }
+  }
+
+  /** O2: cancel a pending recovery. Needs the request id the start call returned. */
+  async cancelRecovery(): Promise<void> {
+    const wallet = this.app.state.wallet;
+    const requestId = this.app.state.recoveryRequestId.trim();
+    if (!wallet || !requestId) {
+      this.app.fail("proof_error", "Enter the recovery request id first.");
+      return;
+    }
+    if (this.app.state.busy) return;
+    this.app.set({ busy: true, failure: undefined, notice: undefined });
+    try {
+      await this.post(`/v1/wallet/${wallet}/recovery/cancel`, { requestId });
+      this.app.set({ recoveryRequestId: "", recoveryExecutableAt: 0 });
+      await this.app.refresh();
+      this.app.set({
+        busy: false,
+        notice: { kind: "success", text: "Recovery cancelled. The wallet is active again." },
+      });
+    } catch (error) {
+      this.app.set({ busy: false });
+      this.app.fail("proof_error", (error as Error).message);
+    }
+  }
+
+  /** O2: finish a recovery after the waiting period. Needs the request id plus
+   *  the new passkey hash the wallet should trust afterwards. */
+  async completeRecovery(): Promise<void> {
+    const wallet = this.app.state.wallet;
+    const requestId = this.app.state.recoveryRequestId.trim();
+    const rawHash = this.app.state.recoveryNewPasskeyHash.trim();
+    const newPasskeyHash = rawHash.length > 0 && !rawHash.startsWith("0x") ? `0x${rawHash}` : rawHash;
+    if (!wallet || !requestId) {
+      this.app.fail("proof_error", "Enter the recovery request id first.");
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(newPasskeyHash)) {
+      this.app.fail("proof_error", "Enter the new passkey hash as 64 hex characters, with or without 0x.");
+      return;
+    }
+    if (this.app.state.busy) return;
+    this.app.set({ busy: true, failure: undefined, notice: undefined });
+    try {
+      // NOTE: the gateway today exposes POST .../recovery and
+      // .../recovery/cancel only; no .../recovery/finalize route exists (the
+      // finalize step lives in the on-chain RecoveryRegistry). This call
+      // succeeds once that route ships and reports plainly until then.
+      await this.post(`/v1/wallet/${wallet}/recovery/finalize`, { requestId, newPasskeyHash });
+      this.app.set({ recoveryRequestId: "", recoveryExecutableAt: 0, recoveryNewPasskeyHash: "" });
+      await this.app.refresh();
+      this.app.set({
+        busy: false,
+        notice: { kind: "success", text: "Recovery completed. The new passkey is now trusted." },
+      });
+    } catch (error) {
+      this.app.set({ busy: false });
+      const status = (error as { status?: number }).status;
+      const code = errorCode(error);
+      if (code === "recovery_not_found") {
+        this.app.fail("proof_error", "No pending recovery has that request id.");
+      } else if (status === 404) {
+        this.app.set({
+          notice: {
+            kind: "warn",
+            text: "The server has no finish step for recovery yet, so this wallet stays pending. Cancel is available now; finishing arrives with the on-chain recovery update.",
+          },
+        });
+      } else {
+        this.app.fail("proof_error", (error as Error).message);
+      }
+    }
+  }
+
+  /** O1: per-device revoke. The server owns the credential list; refresh after. */
+  async revokeCredential(credentialId: string): Promise<void> {
+    const wallet = this.app.state.wallet;
+    if (!wallet || !credentialId) return;
+    if (this.app.state.busy) return;
+    this.app.set({ busy: true, failure: undefined, notice: undefined });
+    try {
+      const response = await fetch(
+        `/v1/wallet/${wallet}/credentials/${encodeURIComponent(credentialId)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string; error?: string } | null;
+        throw Object.assign(new Error(body?.message ?? "revoke failed"), {
+          code: body?.error ?? "request_failed",
+          status: response.status,
+        });
+      }
+      if (this.app.state.selectedCredentialId === credentialId) this.app.set({ selectedCredentialId: "" });
+      await this.app.refresh();
+      this.app.set({
+        busy: false,
+        notice: { kind: "success", text: "Passkey revoked. It can no longer authorize this wallet." },
+      });
+    } catch (error) {
+      this.app.set({ busy: false });
       this.app.fail("proof_error", (error as Error).message);
     }
   }

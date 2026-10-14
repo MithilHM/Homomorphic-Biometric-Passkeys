@@ -202,6 +202,28 @@ export class FheCoprocessor {
   }
 
   /**
+   * Erase every template record for a wallet (M3.5, gate 9).
+   *
+   * All statuses, not just `active`: a retired predecessor is still a
+   * ciphertext of the same biometric and must not survive deletion. Each
+   * record's ciphertext and commitment are best-effort cleared before the
+   * record is unlinked so the live store no longer resolves the commitment.
+   * Stated limit: this cannot defend against heap snapshots or disk snapshots
+   * taken before deletion; it guarantees the commitment is unresolvable and
+   * evaluation fails `template_not_found` afterwards. Returns the number of
+   * records removed.
+   */
+  deleteTemplates(wallet: string): number {
+    const key = wallet.toLowerCase();
+    const records = this.templates.list("templates", (t) => t.wallet === key);
+    for (const record of records) {
+      this.templates.update("templates", record.id, { ciphertext: "", commitment: "" });
+      this.templates.delete("templates", record.id);
+    }
+    return records.length;
+  }
+
+  /**
    * Evaluate the encrypted similarity.
    *
    * The result is a PRODUCT CIPHERTEXT. This function cannot turn it into a
@@ -406,6 +428,22 @@ export function createCoprocessorApp(coprocessor: FheCoprocessor, config: FheSer
     const metadata = coprocessor.templateMetadata(ctx.params.wallet);
     if (!metadata) throw new HttpError(404, "template_not_found", "no enrolled template for this wallet");
     return metadata;
+  }, { raw: true });
+
+  /**
+   * Erase every template record for a wallet (M3.5, gate 9).
+   *
+   * The gateway calls this from `DELETE /v1/wallet/:address/template`; it is
+   * never called implicitly by enrollment (that path only retires). After a
+   * successful delete the commitment is unresolvable and any evaluation fails
+   * `template_not_found` - proven by the deletion end-to-end test.
+   */
+  app.delete("/v1/fhe/template/:wallet", (ctx) => {
+    const wallet = requireString(ctx.params, "wallet", { pattern: /^0x[0-9a-fA-F]{40}$/ });
+    const removed = coprocessor.deleteTemplates(wallet);
+    if (removed === 0) throw new HttpError(404, "template_not_found", "no enrolled template for this wallet");
+    logger.warn("template deleted", { wallet: wallet.toLowerCase(), templatesRemoved: removed });
+    return { deleted: removed, wallet: wallet.toLowerCase() };
   }, { raw: true });
 
   /**

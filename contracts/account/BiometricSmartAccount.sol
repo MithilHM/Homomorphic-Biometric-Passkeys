@@ -26,6 +26,10 @@ import {RecoveryRegistry} from "../modules/RecoveryRegistry.sol";
  *               through the full authorization path.
  *        4. the authorization is unexpired, unconsumed, and bound to this
  *           account, chain, template version and policy revision.
+ *        5. the per-account daily authorization budget is not exhausted
+ *           (at most MAX_AUTHORIZATIONS_PER_DAY consumed 0x48
+ *           authorizations per UTC day; recovery cancellation bypasses
+ *           it so the owner can always cancel).
  *
  *      The biometric match is an authorization CONDITION, never a signature. The
  *      account never proceeds because "a signature exists", and it refuses an
@@ -36,6 +40,9 @@ contract BiometricSmartAccount is IAccount {
     uint8 private constant MAGIC_AUTHORIZATION = 0x48;
     /// @notice Session-key envelope: scoped delegation created after full auth.
     uint8 private constant MAGIC_SESSION = 0x53;
+    /// @notice Cap on consumed 0x48 authorizations per UTC day, per account.
+    ///         Mirrors SponsorshipPaymaster.MAX_SPONSORED_OPS (T-15).
+    uint256 public constant MAX_AUTHORIZATIONS_PER_DAY = 25;
     /// @notice Similarity is expressed in millionths: 1_000_000 == perfect match.
     uint32 public constant MAX_SIMILARITY_BPS = 1_000_000;
 
@@ -67,6 +74,10 @@ contract BiometricSmartAccount is IAccount {
 
     mapping(bytes32 => bool) public passkeys;
     bytes32[] public passkeyList;
+    /// @notice UTC day of the last counted authorization (block.timestamp / 1 days).
+    uint64 public lastAuthDay;
+    /// @notice 0x48 authorizations consumed on lastAuthDay. Resets at UTC midnight.
+    uint32 public authCountToday;
 
     /* -------------------------------------------------------------------- */
     /*                                 Events                               */
@@ -105,6 +116,7 @@ contract BiometricSmartAccount is IAccount {
     error PasskeyAlreadyRegistered();
     error NotEnrollmentFactory();
     error SpendLimitExceeded();
+    error DailyAuthorizationBudgetExceeded();
     error PrefundFailed();
     error InvalidCallTarget();
     error RecoveryDelayNotElapsed();
@@ -177,7 +189,7 @@ contract BiometricSmartAccount is IAccount {
         uint8 magic = uint8(userOp.signature[0]);
         if (magic == MAGIC_AUTHORIZATION) {
             Authorization memory a = _decodeAuthorization(userOp.signature);
-            _checkAuthorization(a, userOpHash);
+            _checkAuthorization(a, userOpHash, _isCancelRecovery(userOp.callData));
             validationData = ValidationData.pack(address(0), uint48(a.expiresAt), 0);
             emit OperationValidated(userOpHash, a.sessionId, false);
         } else if (magic == MAGIC_SESSION) {
@@ -193,17 +205,48 @@ contract BiometricSmartAccount is IAccount {
         }
     }
 
-    function _checkAuthorization(Authorization memory a, bytes32 userOpHash) private {
+    function _checkAuthorization(Authorization memory a, bytes32 userOpHash, bool isCancel) private {
         if (a.decisionProgramHash != decisionProgramHash) revert WrongDecisionProgram();
         if (a.templateVersion != templateVersion) revert WrongTemplateVersion();
         if (a.fheKeyVersion != fheKeyVersion) revert WrongFheKeyVersion();
         if (a.thresholdBps < minimumSimilarityBps) revert ThresholdBelowPolicy();
         if (a.thresholdBps > MAX_SIMILARITY_BPS) revert ThresholdAboveMaximum();
         if (a.policyHash != policyHash) revert AuthorizationRejected();
+        // T-15: daily budget on consumed 0x48 authorizations. Checked BEFORE
+        // verifyAndConsume so a capped attempt neither burns the session nor
+        // the budget; counted only after a successful consume. A recovery
+        // cancellation bypasses the budget: at the cap the owner must still
+        // be able to cancel, or the account (and its funds) locks forever.
+        // The 0x53 session-key path never reaches here and is unaffected.
+        if (!isCancel) _checkAuthBudget();
         // C2: no passkey-only fallback. The committee attestation (signature,
         // expiry, binding, decision, replay) is always verified, regardless of
         // the biometricRequired flag.
         authorizationVerifier.verifyAndConsume(address(this), userOpHash, block.chainid, a);
+        if (!isCancel) _spendAuthBudget();
+    }
+
+    /// @dev UTC day number, so the budget resets at midnight UTC.
+    function _authDay() private view returns (uint64) {
+        return uint64(block.timestamp / 1 days);
+    }
+
+    /// @dev Reverts when today's authorization budget is already spent.
+    function _checkAuthBudget() private view {
+        if (lastAuthDay == _authDay() && authCountToday >= MAX_AUTHORIZATIONS_PER_DAY) {
+            revert DailyAuthorizationBudgetExceeded();
+        }
+    }
+
+    /// @dev Counts one consumed authorization against today's budget.
+    function _spendAuthBudget() private {
+        uint64 today = _authDay();
+        if (lastAuthDay != today) {
+            lastAuthDay = today;
+            authCountToday = 1;
+        } else {
+            authCountToday += 1;
+        }
     }
 
     /**

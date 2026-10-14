@@ -11,6 +11,10 @@ build/
 .data/
 *.local
 
+# Local-only session tracker. Never commit: it contains machine-specific
+# state, operator notes, and pre-sign-off security observations.
+MILESTONES.md
+
 # Generated contract build output (regenerate with `npm run compile:contracts`).
 contracts/artifacts/
 contracts/out/

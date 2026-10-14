@@ -137,6 +137,21 @@ export class FheClient {
     this.templateCache.delete(wallet.toLowerCase());
   }
 
+  /**
+   * Erase every template record for a wallet via the coprocessor (M3.5).
+   * Invalidates the metadata cache so a subsequent `activeTemplate` reflects
+   * the erasure instead of serving the deleted commitment for up to 5s.
+   */
+  async deleteTemplate(wallet: string): Promise<{ deleted: number; wallet: string }> {
+    const key = wallet.toLowerCase();
+    const result = await this.request<{ deleted: number; wallet: string }>(
+      "DELETE",
+      `/v1/fhe/template/${key}`,
+    );
+    this.forgetTemplate(key);
+    return result;
+  }
+
   private readonly templateCache = new Map<
     string,
     { value: TemplateMetadata; expiresAt: number }

@@ -21,6 +21,7 @@ import {
   ADDRESS,
   BASE64URL,
   createLogger,
+  defaultContentSecurityPolicy,
 } from "@homobio/http-kit";
 
 /** Accept `0x`-prefixed or bare 32-byte hex and normalise to the bare form. */
@@ -96,6 +97,13 @@ export interface GatewayConfig {
   dataDir: string;
   /** Requests per minute per limiter. Tests raise these; production uses the defaults. */
   rateLimits?: { challenge?: number; verify?: number; passkey?: number; submit?: number; global?: number };
+  /**
+   * `Content-Security-Policy` emitted on gateway responses. Defaults to the
+   * deny-ish http-kit policy because the gateway serves the wallet bundle;
+   * pass `false` to disable. `false` is an explicit operator choice, never a
+   * silent default.
+   */
+  contentSecurityPolicy?: string | false;
 }
 
 export interface GatewayDeps {
@@ -160,6 +168,9 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
     allowedOrigins: config.allowedOrigins,
     globalRateLimit: { limit: limits.global ?? 600, windowMs: 60_000 },
     defaultMaxBodyBytes: 256 * 1024,
+    // M3.4: the gateway serves the wallet bundle, so it opts into the deny-ish
+    // default policy. API (JSON) responses carry it too; it is inert there.
+    contentSecurityPolicy: config.contentSecurityPolicy ?? defaultContentSecurityPolicy(),
   });
 
   app.useRateLimit("challenge", { limit: limits.challenge ?? 30, windowMs: 60_000, paths: ["/v1/auth/challenge"] });
@@ -466,6 +477,27 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
       },
     };
   }, { raw: true });
+
+  /**
+   * Erase every biometric template record for a wallet (M3.5, gate 9).
+   *
+   * There was no delete path before this route: enrollment only retired
+   * predecessors. This delegates to the coprocessor, which unlinks all of the
+   * wallet's records, and drops the gateway metadata cache so the erasure is
+   * visible immediately. Afterwards the commitment is unresolvable and any
+   * evaluation fails `template_not_found`. Emits `BIOMETRIC_TEMPLATE_DELETED`.
+   */
+  app.delete("/v1/wallet/:address/template", async (ctx) => {
+    const wallet = String(ctx.params.address ?? "").toLowerCase();
+    if (!ADDRESS.test(wallet)) {
+      throw new HttpError(400, "invalid_request", "address must be a 0x-prefixed 20-byte hex string");
+    }
+    // A missing template surfaces as 404 `template_not_found` from the
+    // coprocessor via the client; it is passed through, not masked.
+    const removed = await deps.fheClient.deleteTemplate(wallet);
+    logger.info("biometric template deleted", { wallet, templatesRemoved: removed.deleted });
+    return { deleted: true, templatesRemoved: removed.deleted, wallet };
+  });
 
   /* ------------------------------ challenge ----------------------------- */
 
@@ -864,6 +896,11 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
 
   app.get("/v1/operator/sessions", (ctx) => {
     const limit = Math.min(Number(ctx.query.get("limit") ?? 50), 200);
+    // O9: FHE hides template content, not metadata. Say so in the operator log
+    // itself so nobody mistakes redaction for metadata hiding.
+    logger.info("operator sessions disclosed", {
+      metadata: "wallet identifiers, challenge status, outcome, reason, durations and timestamps are retained; ciphertext byte sizes are observable on the wire; no plaintext biometric content is in any of these",
+    });
     return {
       sessions: deps.store
         .list("sessions")
@@ -880,7 +917,7 @@ export function createGateway(config: GatewayConfig, deps: GatewayDeps): { app: 
           durationMs: s.durationMs ?? null,
           createdAt: s.createdAt,
         })),
-      note: "operator view: this log contains identifiers, status and timings only",
+      note: "operator view: this log contains identifiers, status and timings only; ciphertext sizes remain observable on the wire (see threat model)",
     };
   }, { raw: true });
 
