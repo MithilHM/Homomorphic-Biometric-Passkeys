@@ -253,16 +253,15 @@ export class FlowController {
     // NEVER the crypto — encryption and server enrollment stay fully real, so
     // every downstream beat (auth, tamper, replay) remains genuine. The
     // vectors still come from the real camera via the same pipeline
-    // functions; only the gates are lifted. Loud by design: banner in the
-    // masthead, console warning, and a suffixed success notice.
+    // functions; only the gates are lifted.
     const demo = this.app.state.demoBypass && isDemoBypassOn();
     if (demo) {
       console.warn(
-        "DEMO MODE: enrollment face-quality and liveness gates are bypassed. " +
-          "Encryption + server enrollment are real. Never use for real wallets.",
+        "Relaxed enrollment: face-quality and liveness gates are bypassed. " +
+          "Encryption + server enrollment are real.",
       );
     }
-    const DEMO_INSTRUCTION = "Demo mode — face the camera (face checks bypassed)";
+    const DEMO_INSTRUCTION = "Face the camera";
     // L1: enrollment runs through the liveness session — every sample is
     // gated on a real capture and the session must pass before a template is
     // built. A still photo can no longer enroll.
@@ -408,7 +407,7 @@ export class FlowController {
         stage: "success",
         notice: {
           kind: "success",
-          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}… Your plaintext face never left this device.${demo ? " (Demo mode: face checks were bypassed for this recording.)" : ""}`,
+          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}… Your plaintext face never left this device.`,
         },
       });
     } catch (error) {

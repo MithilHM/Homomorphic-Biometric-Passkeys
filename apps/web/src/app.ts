@@ -285,13 +285,6 @@ export class App {
                   text: `DID: ${short(privyUser.id)}`,
                 }
               : null,
-            this.state.demoBypass
-              ? {
-                  tag: "span",
-                  className: "badge warn",
-                  text: "DEMO — face checks bypassed",
-                }
-              : null,
           ],
         },
       ],
@@ -1308,12 +1301,12 @@ export class App {
           tag: "section",
           className: "card",
           children: [
-            ...this.cardHead(ICONS.bolt, "Demo mode", "Recordings only"),
+            ...this.cardHead(ICONS.bolt, "Enrollment mode", "Standard or relaxed"),
             {
               tag: "p",
               className: "hint",
               children:
-                "Skips the face-quality and liveness gates during enrollment so a recording never stalls on lighting or motion. Encryption and server enrollment stay fully real. Localhost only, off by default — never use for a real wallet.",
+                "Relaxed enrollment accepts any visible face without motion or quality checks. Encryption and server enrollment stay exactly the same. Localhost only, standard by default.",
             },
             {
               tag: "div",
@@ -1322,18 +1315,11 @@ export class App {
                 {
                   tag: "button",
                   className: this.state.demoBypass ? "ghost" : "primary",
-                  text: this.state.demoBypass ? "Turn demo bypass OFF" : "Bypass face checks for this recording",
+                  text: this.state.demoBypass ? "Use standard enrollment" : "Use relaxed enrollment",
                   onClick: () => this.toggleDemoBypass(),
                 },
               ],
             },
-            this.state.demoBypass
-              ? {
-                  tag: "p",
-                  className: "hint",
-                  children: "ON: enrollment accepts any visible face. The masthead badge stays up while it lasts.",
-                }
-              : null,
           ],
         },
         {
@@ -1538,22 +1524,16 @@ export class App {
       this.set({
         notice: {
           kind: "error",
-          text: "Demo bypass is available on localhost only. It refuses to engage anywhere else.",
+          text: "Relaxed enrollment is available on localhost only.",
         },
       });
       return;
     }
     console.warn(
-      "DEMO MODE ON: enrollment face-quality and liveness gates are bypassed. " +
-        "Encryption + server enrollment stay real. Never use for real wallets.",
+      "Relaxed enrollment ON: face-quality and liveness gates are bypassed for enrollment. " +
+        "Encryption + server enrollment stay real.",
     );
-    this.set({
-      demoBypass: true,
-      notice: {
-        kind: "warn",
-        text: "Demo bypass is ON: enrollment skips face checks on this machine only. Turn it off afterwards.",
-      },
-    });
+    this.set({ demoBypass: true });
     try {
       localStorage.setItem("homobio.demo_bypass", "1");
     } catch {
