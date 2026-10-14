@@ -19,7 +19,7 @@ import { PrivyPasskeyProvider } from "@homobio/privy-adapter";
 import { announce, mount, type VNode } from "./ui.js";
 import { ICONS } from "./icons.js";
 import { CameraController } from "./camera.js";
-import { FlowController } from "./flows.js";
+import { FlowController, isDemoBypassHost } from "./flows.js";
 
 interface AppState {
   stage: PipelineStage;
@@ -46,10 +46,11 @@ interface AppState {
   recoveryRequestId: string;
   recoveryExecutableAt: number;
   recoveryNewPasskeyHash: string;
+  /** Demo bypass (recordings only): skips enrollment face gates. Localhost-only, default off. */
+  demoBypass: boolean;
 }
 
-const STAGES: Array<{ stage: PipelineStage; label: string }> = [
-  { stage: "idle", label: "Idle" },
+const STAGES: Array<{ stage: PipelineStage; label: string }> = [  { stage: "idle", label: "Idle" },
   { stage: "request_permission", label: "Camera permission" },
   { stage: "camera_ready", label: "Camera ready" },
   { stage: "face_detected", label: "Face detected" },
@@ -63,6 +64,17 @@ const STAGES: Array<{ stage: PipelineStage; label: string }> = [
   { stage: "submitting", label: "Submitting" },
   { stage: "success", label: "Complete" },
 ];
+
+/** Demo bypass restores ON only from an explicit localhost opt-in. */
+function readDemoBypass(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    if (!isDemoBypassHost(window.location.hostname)) return false;
+    return window.localStorage.getItem("homobio.demo_bypass") === "1";
+  } catch {
+    return false;
+  }
+}
 
 export class App {
   readonly state: AppState = {
@@ -81,6 +93,7 @@ export class App {
     recoveryRequestId: "",
     recoveryExecutableAt: 0,
     recoveryNewPasskeyHash: "",
+    demoBypass: readDemoBypass(),
   };
 
   readonly camera = new CameraController();
@@ -270,6 +283,13 @@ export class App {
                   tag: "span",
                   className: "badge info",
                   text: `DID: ${short(privyUser.id)}`,
+                }
+              : null,
+            this.state.demoBypass
+              ? {
+                  tag: "span",
+                  className: "badge warn",
+                  text: "DEMO — face checks bypassed",
                 }
               : null,
           ],
@@ -1285,6 +1305,38 @@ export class App {
           ],
         },
         {
+          tag: "section",
+          className: "card",
+          children: [
+            ...this.cardHead(ICONS.bolt, "Demo mode", "Recordings only"),
+            {
+              tag: "p",
+              className: "hint",
+              children:
+                "Skips the face-quality and liveness gates during enrollment so a recording never stalls on lighting or motion. Encryption and server enrollment stay fully real. Localhost only, off by default — never use for a real wallet.",
+            },
+            {
+              tag: "div",
+              className: "row",
+              children: [
+                {
+                  tag: "button",
+                  className: this.state.demoBypass ? "ghost" : "primary",
+                  text: this.state.demoBypass ? "Turn demo bypass OFF" : "Bypass face checks for this recording",
+                  onClick: () => this.toggleDemoBypass(),
+                },
+              ],
+            },
+            this.state.demoBypass
+              ? {
+                  tag: "p",
+                  className: "hint",
+                  children: "ON: enrollment accepts any visible face. The masthead badge stays up while it lasts.",
+                }
+              : null,
+          ],
+        },
+        {
       tag: "section",
       className: "card",
       children: [
@@ -1463,6 +1515,50 @@ export class App {
 
   rememberWallet(): void {
     if (this.state.wallet) localStorage.setItem("homobio.wallet", this.state.wallet);
+  }
+
+  /** Demo bypass toggle (Diagnostics card). Localhost-only, default off. */
+  toggleDemoBypass(): void {
+    if (this.state.demoBypass) {
+      this.set({ demoBypass: false });
+      try {
+        localStorage.removeItem("homobio.demo_bypass");
+      } catch {
+        // Storage unavailable: in-memory state is already off.
+      }
+      return;
+    }
+    let local = false;
+    try {
+      local = typeof window !== "undefined" && isDemoBypassHost(window.location.hostname);
+    } catch {
+      local = false;
+    }
+    if (!local) {
+      this.set({
+        notice: {
+          kind: "error",
+          text: "Demo bypass is available on localhost only. It refuses to engage anywhere else.",
+        },
+      });
+      return;
+    }
+    console.warn(
+      "DEMO MODE ON: enrollment face-quality and liveness gates are bypassed. " +
+        "Encryption + server enrollment stay real. Never use for real wallets.",
+    );
+    this.set({
+      demoBypass: true,
+      notice: {
+        kind: "warn",
+        text: "Demo bypass is ON: enrollment skips face checks on this machine only. Turn it off afterwards.",
+      },
+    });
+    try {
+      localStorage.setItem("homobio.demo_bypass", "1");
+    } catch {
+      // Storage unavailable: the in-memory flag still governs this session.
+    }
   }
 
   static create(root: HTMLElement): App {

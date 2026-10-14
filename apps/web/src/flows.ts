@@ -16,9 +16,13 @@ import {
   EMBEDDING_DIMENSION,
   EMBEDDING_VERSION,
   aggregateTemplate,
+  alignFace,
   analyzeFrame,
+  detectFaces,
+  embedAligned,
   seededUnitVectorLocal,
   type RgbaImage,
+  type TemplateSample,
 } from "@homobio/biometric-client";
 import { createCredential, getAssertion, isWebAuthnSupported } from "@homobio/webauthn";
 import { NonceDomain, UserOperationBuilder, getUserOpHash } from "@homobio/userop";
@@ -29,6 +33,26 @@ import type { App } from "./app.js";
 import { previewUserOperation } from "./simulate.js";
 
 const ENROLL_SAMPLES = 7;
+
+/**
+ * Demo bypass allowlist: the recording bypass ONLY engages on loopback.
+ * A transplanted localStorage value on a public origin must never silently
+ * weaken enrollment — the toggle refuses there (see Diagnostics card).
+ */
+export function isDemoBypassHost(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0:0:0:0:0:0:0:1";
+}
+
+function isDemoBypassOn(): boolean {
+  try {
+    if (typeof window === "undefined") return false;
+    if (!isDemoBypassHost(window.location.hostname)) return false;
+    return window.localStorage.getItem("homobio.demo_bypass") === "1";
+  } catch {
+    return false;
+  }
+}
 
 export class FlowController {
   private engine?: HomomorphicEngine;
@@ -225,11 +249,26 @@ export class FlowController {
     }
 
     this.app.setStage("camera_ready");
+    // Demo bypass (recordings only): skip the quality/liveness gates, but
+    // NEVER the crypto — encryption and server enrollment stay fully real, so
+    // every downstream beat (auth, tamper, replay) remains genuine. The
+    // vectors still come from the real camera via the same pipeline
+    // functions; only the gates are lifted. Loud by design: banner in the
+    // masthead, console warning, and a suffixed success notice.
+    const demo = this.app.state.demoBypass && isDemoBypassOn();
+    if (demo) {
+      console.warn(
+        "DEMO MODE: enrollment face-quality and liveness gates are bypassed. " +
+          "Encryption + server enrollment are real. Never use for real wallets.",
+      );
+    }
+    const DEMO_INSTRUCTION = "Demo mode — face the camera (face checks bypassed)";
     // L1: enrollment runs through the liveness session — every sample is
     // gated on a real capture and the session must pass before a template is
     // built. A still photo can no longer enroll.
     const session = new BiometricCaptureSession();
-    this.app.set({ livenessInstruction: session.instruction });
+    this.app.set({ livenessInstruction: demo ? DEMO_INSTRUCTION : session.instruction });
+    const demoExtras: TemplateSample[] = [];
 
     // Enrollment gives the user room to read, position, and perform the
     // challenge: 60s for motion + samples, then a one-time 30s extension for
@@ -240,12 +279,12 @@ export class FlowController {
     const reasonCounts = new Map<string, number>();
     let lastReasons: string[] = [];
     let lastUiUpdate = 0;
-    let motionAccepted = false;
+    let motionAccepted = demo;
 
     for (;;) {
       const now = Date.now();
       if (now >= deadline) {
-        if (!extended && (motionAccepted || session.livenessResult?.passed) && session.capturedSamples.length > 0) {
+        if (!extended && (motionAccepted || session.livenessResult?.passed) && session.capturedSamples.length + demoExtras.length > 0) {
           extended = true;
           deadline = now + 30_000;
         } else {
@@ -257,7 +296,22 @@ export class FlowController {
         await sleep(80);
         continue;
       }
+      const before = session.capturedSamples.length;
       const pushed = session.push(frame);
+      if (demo && session.capturedSamples.length === before) {
+        // Gated frame, visible face: extract through the same pipeline
+        // functions minus the quality gate, so the template still describes
+        // the person in front of THIS camera (and their later auth matches).
+        const face = detectFaces(frame).faces[0];
+        if (face) {
+          try {
+            const embedding = embedAligned(alignFace(frame, face));
+            demoExtras.push({ vector: embedding.vector, quality: 0.5 });
+          } catch {
+            // A bad frame contributes nothing; the loop simply continues.
+          }
+        }
+      }
       if (pushed.liveness?.passed || session.livenessResult?.passed) motionAccepted = true;
       for (const reason of pushed.quality.reasons) {
         reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
@@ -269,7 +323,7 @@ export class FlowController {
         this.app.fail("multiple_faces");
         return;
       }
-      const count = session.capturedSamples.length;
+      const count = session.capturedSamples.length + demoExtras.length;
       // Live viewfinder feedback, throttled: before this fix the overlay showed
       // a static instruction and the progress bar only appeared after the first
       // usable sample, so a camera that never produced one looked "stuck on"
@@ -279,9 +333,11 @@ export class FlowController {
         const secondsLeft = Math.ceil((deadline - now) / 1000);
         // Once the motion is accepted, say so: the user can relax and hold
         // still for the remaining samples instead of repeating the motion.
-        const instruction = motionAccepted
-          ? `Motion accepted — hold still (${Math.max(0, ENROLL_SAMPLES - count)} more sample${ENROLL_SAMPLES - count === 1 ? "" : "s"})`
-          : session.instruction;
+        const instruction = demo
+          ? DEMO_INSTRUCTION
+          : motionAccepted
+            ? `Motion accepted — hold still (${Math.max(0, ENROLL_SAMPLES - count)} more sample${ENROLL_SAMPLES - count === 1 ? "" : "s"})`
+            : session.instruction;
         this.app.set({
           progress: count / ENROLL_SAMPLES,
           stage: count < ENROLL_SAMPLES ? "face_quality_ok" : "embedding_generated",
@@ -295,7 +351,7 @@ export class FlowController {
     this.app.camera.stop();
     this.app.set({ livenessInstruction: undefined, progress: undefined });
 
-    const captured = session.capturedSamples;
+    const captured = demo ? [...session.capturedSamples, ...demoExtras] : session.capturedSamples;
     if (captured.length === 0) {
       // Zero usable frames: report what was actually observed instead of a
       // generic liveness failure. "Follow the instruction" is the wrong advice
@@ -305,11 +361,13 @@ export class FlowController {
       return;
     }
 
-    const liveness = session.livenessResult ?? session.liveness.finish();
-    if (!liveness.passed) {
-      this.app.set({ busy: false });
-      this.app.fail("liveness_failed", liveness.failureReason ?? "could not confirm a live interaction");
-      return;
+    if (!demo) {
+      const liveness = session.livenessResult ?? session.liveness.finish();
+      if (!liveness.passed) {
+        this.app.set({ busy: false });
+        this.app.fail("liveness_failed", liveness.failureReason ?? "could not confirm a live interaction");
+        return;
+      }
     }
 
     if (captured.length < ENROLL_SAMPLES) {
@@ -323,7 +381,8 @@ export class FlowController {
       const template = aggregateTemplate(captured);
       // T3: refuse wildly inconsistent enrollments instead of logging and
       // proceeding — a high spread means lighting/framing trouble, not a face.
-      if (template.intraClassSpread > 0.25 || template.rejectedSamples > captured.length / 2) {
+      // (Lifted in demo mode: gate-bypassed frames vary more by construction.)
+      if (!demo && (template.intraClassSpread > 0.25 || template.rejectedSamples > captured.length / 2)) {
         this.app.set({ busy: false });
         this.app.fail(
           "poor_quality",
@@ -349,7 +408,7 @@ export class FlowController {
         stage: "success",
         notice: {
           kind: "success",
-          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}… Your plaintext face never left this device.`,
+          text: `Template v${stored.templateVersion} encrypted with ${engine.params.engine} and stored as ${stored.commitment.slice(0, 14)}… Your plaintext face never left this device.${demo ? " (Demo mode: face checks were bypassed for this recording.)" : ""}`,
         },
       });
     } catch (error) {
