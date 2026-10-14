@@ -39,6 +39,13 @@ interface AppState {
   selectedMeraRole: MeraKeyRole;
   lastMeraTx?: { keyTitle: string; hash: string; gasSaved: string; durationMs: number; viaSessionKey: boolean };
   pipelineOpen: boolean;
+  /** O1: full credential list for the picker plus the explicit per-credential pick. */
+  credentials: Array<{ credentialId: string; label?: string; role?: string; transports?: string[]; lastUsedAt?: number }>;
+  selectedCredentialId: string;
+  /** O2: pending recovery request being cancelled or completed. */
+  recoveryRequestId: string;
+  recoveryExecutableAt: number;
+  recoveryNewPasskeyHash: string;
 }
 
 const STAGES: Array<{ stage: PipelineStage; label: string }> = [
@@ -69,6 +76,11 @@ export class App {
     privyAppId: "",
     selectedMeraRole: "trading",
     pipelineOpen: false,
+    credentials: [],
+    selectedCredentialId: "",
+    recoveryRequestId: "",
+    recoveryExecutableAt: 0,
+    recoveryNewPasskeyHash: "",
   };
 
   readonly camera = new CameraController();
@@ -107,6 +119,8 @@ export class App {
     if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
       this.set({
         account: null,
+        credentials: [],
+        selectedCredentialId: "",
         notice: { kind: "error", text: "That doesn't look like an Ethereum address (0x followed by 40 hex characters)." },
       });
       return;
@@ -116,12 +130,15 @@ export class App {
       if (response.ok) {
         this.set({ account: await response.json() });
         this.rememberWallet();
+        await this.refreshCredentials();
         return;
       }
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (response.status === 404 || body?.error === "account_not_found") {
         this.set({
           account: null,
+          credentials: [],
+          selectedCredentialId: "",
           notice: {
             kind: "warn",
             text: "No account exists for this address yet. Create a passkey above to register it — the wallet is created on first registration, not by pasting an address.",
@@ -138,6 +155,28 @@ export class App {
         account: null,
         notice: { kind: "error", text: "Could not reach the gateway. Is the local stack still running?" },
       });
+    }
+  }
+
+  /** O1: best-effort credential list for the picker. Failure leaves the old
+   *  list alone so auth can still fall back to the discoverable ceremony. */
+  async refreshCredentials(): Promise<void> {
+    const wallet = this.state.wallet.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+      this.set({ credentials: [], selectedCredentialId: "" });
+      return;
+    }
+    try {
+      const response = await fetch(`/v1/wallet/${wallet}/credentials`);
+      if (!response.ok) return;
+      const body = await response.json();
+      const list = Array.isArray(body.credentials) ? body.credentials : [];
+      const stillThere =
+        this.state.selectedCredentialId.length > 0 &&
+        list.some((c: { credentialId: string }) => c.credentialId === this.state.selectedCredentialId);
+      this.set({ credentials: list, selectedCredentialId: stillThere ? this.state.selectedCredentialId : "" });
+    } catch {
+      // Picker stays stale; the authenticate flow refetches before signing.
     }
   }
 
@@ -503,12 +542,34 @@ export class App {
                       ],
                     }
                   : {
-                      tag: "dl",
-                      className: "kv",
-                      children: devices.flatMap((device: any) => [
-                        { tag: "dt", children: device.label },
-                        { tag: "dd", children: `${device.role} · ${short(device.credentialId)} · used ${timeAgo(device.lastUsedAt)}` },
-                      ]),
+                      tag: "ul",
+                      className: "device-list",
+                      children: devices.map((device: any) => ({
+                        tag: "li",
+                        className: "device-row",
+                        children: [
+                          {
+                            tag: "div",
+                            className: "device-meta",
+                            children: [
+                              { tag: "strong", children: device.label ?? "Passkey" },
+                              {
+                                tag: "p",
+                                className: "hint",
+                                children: `${device.role ?? "primary"} · ${short(device.credentialId)} · used ${timeAgo(device.lastUsedAt)}`,
+                              },
+                            ],
+                          },
+                          {
+                            tag: "button",
+                            className: "ghost device-revoke",
+                            text: this.state.busy ? "Working…" : "Revoke",
+                            disabled: this.state.busy,
+                            ariaLabel: `Revoke ${device.label ?? "passkey"}`,
+                            onClick: () => void this.flows.revokeCredential(device.credentialId),
+                          },
+                        ],
+                      })),
                     },
               ],
             },
@@ -605,6 +666,7 @@ export class App {
           children: [
             ...this.cardHead(ICONS.lock, "Authorize", "Authorize a transaction"),
             { tag: "p", className: "hint", children: "Face, passkey and the exact operation are all required." },
+            this.credentialPicker(),
             {
               tag: "div",
               className: "field",
@@ -649,6 +711,67 @@ export class App {
           ],
         },
         this.viewfinderCard(),
+      ],
+    };
+  }
+
+  /** O1: per-credential picker. With many credentials the OS account chooser
+   *  is noisy, so the user picks one id up front and auth uses an allow-list
+   *  for it; clearing the pick keeps the discoverable ceremony instead. */
+  private credentialPicker(): VNode {
+    const list = this.state.credentials.length > 0 ? this.state.credentials : (this.state.account?.devices ?? []);
+    const selected = this.state.selectedCredentialId;
+    if (list.length === 0) {
+      return { tag: "p", className: "hint", children: "No passkeys found for this wallet yet." };
+    }
+    return {
+      tag: "div",
+      className: "field",
+      children: [
+        { tag: "label", children: `Which passkey signs (${list.length} registered)` },
+        {
+          tag: "ul",
+          className: "device-list",
+          children: list.map((c: { credentialId: string; label?: string }) => ({
+            tag: "li",
+            className: "device-row",
+            dataset: { selected: selected === c.credentialId ? "true" : "false" },
+            children: [
+              {
+                tag: "div",
+                className: "device-meta",
+                children: [
+                  { tag: "strong", children: c.label ?? "Passkey" },
+                  { tag: "p", className: "hint", children: short(c.credentialId) },
+                ],
+              },
+              selected === c.credentialId
+                ? { tag: "span", className: "badge ok", text: "Selected" }
+                : {
+                    tag: "button",
+                    className: "ghost",
+                    text: "Use this",
+                    disabled: this.state.busy,
+                    onClick: () => this.set({ selectedCredentialId: c.credentialId }),
+                  },
+            ],
+          })),
+        },
+        list.length > 1 && selected.length > 0
+          ? {
+              tag: "button",
+              className: "ghost",
+              text: "Let the browser choose instead",
+              onClick: () => this.set({ selectedCredentialId: "" }),
+            }
+          : null,
+        list.length >= 6
+          ? {
+              tag: "p",
+              className: "hint",
+              children: "Many passkeys: picking one skips the crowded browser account chooser.",
+            }
+          : null,
       ],
     };
   }
@@ -773,6 +896,7 @@ export class App {
             },
           ],
         },
+        this.recoveryCard(),
         {
           tag: "section",
           className: "card",
@@ -794,6 +918,98 @@ export class App {
             },
           ],
         },
+      ],
+    };
+  }
+
+  /** O2: recovery cancel + complete. Starting only begins a timelocked
+   *  request; cancel stops it and complete finishes it after the wait. */
+  private recoveryCard(): VNode {
+    const pending = this.state.account?.state === "RECOVERY";
+    return {
+      tag: "section",
+      className: "card",
+      children: [
+        ...this.cardHead(ICONS.shieldCheck, "Recovery", "Account recovery"),
+        {
+          tag: "p",
+          className: "hint",
+          children: pending
+            ? "Recovery is pending. Nothing moves until the waiting period ends. Cancel stops it; Complete finishes it after the wait."
+            : "Lost every passkey? Start recovery to lock the wallet and begin the waiting period.",
+        },
+        {
+          tag: "div",
+          className: "field",
+          children: [
+            { tag: "label", for: "recovery-request", children: "Recovery request id" },
+            {
+              tag: "input",
+              id: "recovery-request",
+              value: this.state.recoveryRequestId,
+              placeholder: "Returned when recovery starts",
+              spellcheck: false,
+              autocomplete: "off",
+              onInput: (value: string) => {
+                // Direct assignment, no re-render: same focus-preserving
+                // pattern as the wallet address field above.
+                this.state.recoveryRequestId = value.trim();
+              },
+            },
+          ],
+        },
+        {
+          tag: "div",
+          className: "field",
+          children: [
+            { tag: "label", for: "recovery-new-passkey", children: "New passkey hash (needed to finish)" },
+            {
+              tag: "input",
+              id: "recovery-new-passkey",
+              value: this.state.recoveryNewPasskeyHash,
+              placeholder: "0x followed by 64 hex characters",
+              spellcheck: false,
+              autocomplete: "off",
+              onInput: (value: string) => {
+                this.state.recoveryNewPasskeyHash = value.trim();
+              },
+            },
+          ],
+        },
+        {
+          tag: "div",
+          className: "row",
+          children: [
+            {
+              tag: "button",
+              className: "primary",
+              text: "Start recovery",
+              disabled: this.state.busy || !this.state.wallet,
+              onClick: () => void this.flows.startRecovery(),
+            },
+            {
+              tag: "button",
+              className: "ghost",
+              text: "Cancel recovery",
+              disabled: this.state.busy || this.state.recoveryRequestId.length === 0,
+              onClick: () => void this.flows.cancelRecovery(),
+            },
+            {
+              tag: "button",
+              className: "ghost",
+              text: "Complete recovery",
+              disabled: this.state.busy || this.state.recoveryRequestId.length === 0,
+              onClick: () => void this.flows.completeRecovery(),
+            },
+          ],
+        },
+        this.state.recoveryExecutableAt > 0
+          ? {
+              tag: "p",
+              className: "hint",
+              children: `Cannot complete before ${new Date(this.state.recoveryExecutableAt * 1000).toLocaleString()}.`,
+            }
+          : null,
       ],
     };
   }
@@ -1050,6 +1266,22 @@ export class App {
                   ["Conditional mediation", platform.conditionalMediation ? "available" : "unavailable"],
                 ])
               : { tag: "p", className: "hint", children: "Probing the browser…" },
+            {
+              tag: "ul",
+              className: "notice-list",
+              children: [
+                {
+                  tag: "li",
+                  children:
+                    "Passkeys stay in this browser profile. They will not appear in Incognito windows or other profiles — register a separate passkey there if you need one.",
+                },
+                {
+                  tag: "li",
+                  children:
+                    "No this-device option in the sign-in picker usually means no Windows Hello PIN or fingerprint is set up. Add one in Windows Settings, then reopen this page.",
+                },
+              ],
+            },
           ],
         },
         {

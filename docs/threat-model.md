@@ -70,8 +70,10 @@ because the challenge is origin-bound.
 **Risk:** malicious JS captures frames or embeddings before encryption.
 **Mitigated:** no third-party runtime dependency in the shipped bundle (the whole
 client is our TypeScript); zero plaintext logging enforced by the redaction list
-in `packages/http-kit`; a Content-Security-Policy should be added at the edge
-(not yet configured here).
+in `packages/http-kit`; the gateway serves a deny-ish `Content-Security-Policy`
+(`default-src 'self'`, no `unsafe-inline`, no `unsafe-eval`) on every response
+including the static bundle mount — see `defaultContentSecurityPolicy()` in
+`packages/http-kit` and `packages/http-kit/test/csp.test.ts`.
 **Open:** no Subresource Integrity is possible for our own bundle; reproducible
 builds and a native client path are the mitigations listed in the PRD.
 
@@ -157,10 +159,20 @@ Stated plainly, because a threat model that claims completeness is not one:
    limits and lockout slow this; they do not make it impossible.
 5. **Observe metadata**: which wallet authenticated, when, how long it took, and
    ciphertext sizes. FHE does not hide metadata and we do not claim it does.
+   Concretely observable (O9, accepted and disclosed): wallet addresses and
+   credential/template identifiers in API payloads; timestamps, durations,
+   challenge status, outcome and reason retained in operator logs
+   (`GET /v1/operator/sessions`, which also emits a disclosure log line on
+   every view); request timing; and ciphertext byte sizes on the wire and in
+   the coprocessor store. None of these carry plaintext biometric content,
+   and the redaction list keeps it that way — but an observer can always tell
+   *who* authenticated, *when*, for *how long*, and *how large* the
+   ciphertexts were.
 
 ## 3. Security events
 
 `BIOMETRIC_ENROLLMENT_CREATED`, `BIOMETRIC_ENROLLMENT_REPLACED`,
+`BIOMETRIC_TEMPLATE_DELETED`,
 `BIOMETRIC_AUTH_SUCCESS`, `BIOMETRIC_AUTH_FAILURE`, `LIVENESS_FAILURE`,
 `WEBAUTHN_FAILURE`, `PROOF_FAILURE`, `REPLAY_DETECTED`, `USEROP_REJECTED`,
 `RECOVERY_STARTED`, `RECOVERY_CANCELLED`, `RECOVERY_COMPLETED`,
@@ -180,11 +192,11 @@ view is asserted to contain no field whose name suggests biometric material.
 | 1 | FHE parameters documented with a security justification | **Done** (`docs/crypto-parameters.md`) |
 | 2 | Biometric threshold measured FAR/FRR | **Open** — thresholds are provisional; synthetic vectors only |
 | 3 | Liveness adversarially tested | **Open** — active only, no adversarial dataset |
-| 4 | Browser supply-chain reviewed | **Partial** — no third-party runtime deps; CSP not configured here |
+| 4 | Browser supply-chain reviewed | **Partial** — no third-party runtime deps; CSP configured for the gateway static mount (http-kit default policy, no `unsafe-inline`); bundle reproducibility and release signing still open |
 | 5 | Recovery audited | **Open** — implemented, not audited |
 | 6 | Contracts independently reviewed | **Open** |
 | 7 | Proof verification independently tested | **Partial** — property tests in-repo |
 | 8 | Key management threat-modelled | **Done** |
-| 9 | Template deletion semantics verified | **Open** — `status: deleted` exists, erasure is not verified |
+| 9 | Template deletion semantics verified | **Done** — `DELETE /v1/wallet/:address/template` erases every coprocessor record for the wallet; proven end-to-end (record gone, commitment unresolvable, evaluate fails `template_not_found`) |
 | 10 | Device-loss recovery tested end to end | **Partial** — timelock tested, full recovery not exercised on-chain |
 | 11 | Biometric processing assessed for deployment jurisdictions | **Open** — legal, not engineering |
